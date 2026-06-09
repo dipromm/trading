@@ -1,0 +1,19 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Perfil: SWING (por defecto)
+# ──────────────────────────────────────────────────────────────────────────────
+# El perfil base del sistema. Genera señales diarias y mantiene posiciones
+# de días a semanas. Es el perfil más equilibrado y el que más datos tiene.
+# Este YAML anula (override) solo los parámetros que difieren del config.yaml base.
+# ──────────────────────────────────────────────────────────────────────────────
+
+profile:
+  name: "swing"
+  description: "Señales diarias, posiciones de días a semanas. Perfil por defecto."
+  signal_frequency: "daily"       # Una señal por ticker al cierre de cada día
+  holding_horizon_hint_days: 10   # Orientativo; el Gestor cierra según ATR stop-loss
+
+# Sin overrides: usa los valores de config.yaml base tal cual.
+# Este archivo sirve principalmente como documentación y para invocación explícita.
+#
+# Uso:
+#   python run.py --profile profiles/swing.yaml

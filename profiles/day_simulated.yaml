@@ -1,0 +1,54 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Perfil: DAY TRADING SIMULADO
+# ──────────────────────────────────────────────────────────────────────────────
+# ADVERTENCIA — SOLO SIMULACIÓN. Diferencias críticas con el day trading real:
+#
+#   1. Este perfil usa precios de APERTURA y CIERRE del mismo día como proxy
+#      de entradas y salidas intraday. NO tenemos datos de minutos u horas.
+#   2. En day trading real el SPREAD (diferencia bid-ask) y el SLIPPAGE
+#      (deslizamiento de precio al ejecutar) son costes enormes que no podemos
+#      modelar con datos diarios.
+#   3. Los resultados NO son representativos de un sistema de day trading real.
+#
+# Utilidad de este perfil:
+#   - Experimentación y aprendizaje sobre cómo afecta el horizonte temporal
+#   - Comparación académica entre perfiles en la web de portfolio
+#   - Entrenar el Matemático con features de muy corto plazo como ejercicio
+# ──────────────────────────────────────────────────────────────────────────────
+
+profile:
+  name: "day_simulated"
+  description: "Simula compra a apertura, venta a cierre del mismo día. SOLO académico."
+  disclaimer: >
+    IMPORTANTE: Este perfil usa precios de apertura y cierre diarios como proxy
+    de day trading. No modela spread bid-ask ni slippage real. Los resultados
+    son optimistas respecto a un sistema de day trading real con datos de minutos.
+    No usar para decisiones de inversión.
+  signal_frequency: "daily"
+  execution: "buy_at_open_sell_at_close"   # t: señal al cierre t-1, entra a open_t, sale a close_t
+  max_holding_days: 1                       # Cierra siempre al final del día
+
+data:
+  # Usar los mismos OHLCV diarios; el backtester distingue Open/Close del mismo día
+  use_open_price_for_entry: true
+  use_close_price_for_exit: true
+
+matematico:
+  features_override:
+    sma_windows: [5, 10]           # Ventanas muy cortas para señales intraday
+    rsi_window: 5
+    macd_windows: [6, 13, 3]
+    bollinger_window: 10
+    atr_window: 5
+
+backtester:
+  commission_pct: 0.0020           # Comisiones más altas para compensar spread no modelado
+  slippage_proxy_pct: 0.0010       # Penalización extra por slippage estimado (conservador)
+
+risk_manager:
+  kelly_fraction: 0.25             # Quarter-Kelly: muy conservador para alta frecuencia
+  max_position_pct: 0.10           # Sin concentración: diversificar para reducir riesgo diario
+  stop_loss_atr_mult: 1.5          # Stop-loss muy ajustado
+
+# Uso:
+#   python run.py --profile profiles/day_simulated.yaml

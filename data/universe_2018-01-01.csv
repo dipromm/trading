@@ -1,0 +1,47 @@
+ticker,name,asset_class,sector,notes
+AAPL,Apple Inc.,equity,Technology,
+MSFT,Microsoft Corporation,equity,Technology,
+AMZN,Amazon.com Inc.,equity,Technology / Consumer Discretionary,
+GOOGL,Alphabet Inc. Class A,equity,Technology,
+META,Meta Platforms Inc.,equity,Technology,Cotizaba como FB hasta 2022
+NVDA,NVIDIA Corporation,equity,Technology,
+NFLX,Netflix Inc.,equity,Communication Services,
+ADBE,Adobe Inc.,equity,Technology,
+AVGO,Broadcom Inc.,equity,Technology,
+COST,Costco Wholesale Corporation,equity,Consumer Staples,
+CSCO,Cisco Systems Inc.,equity,Technology,
+INTC,Intel Corporation,equity,Technology,Underperformer incluido para mitigar survivorship bias
+QCOM,Qualcomm Inc.,equity,Technology,
+TXN,Texas Instruments Inc.,equity,Technology,
+AMGN,Amgen Inc.,equity,Healthcare,
+SBUX,Starbucks Corporation,equity,Consumer Discretionary,
+INTU,Intuit Inc.,equity,Technology,
+ISRG,Intuitive Surgical Inc.,equity,Healthcare,
+GILD,Gilead Sciences Inc.,equity,Healthcare,Underperformer incluido para mitigar survivorship bias
+BIIB,Biogen Inc.,equity,Healthcare,Underperformer incluido para mitigar survivorship bias
+VRTX,Vertex Pharmaceuticals Inc.,equity,Healthcare,
+REGN,Regeneron Pharmaceuticals Inc.,equity,Healthcare,
+AMAT,Applied Materials Inc.,equity,Technology,
+LRCX,Lam Research Corporation,equity,Technology,
+ADSK,Autodesk Inc.,equity,Technology,
+ILMN,Illumina Inc.,equity,Healthcare,Underperformer post-2021
+BIDU,Baidu Inc.,equity,Technology,Underperformer — riesgo regulatorio chino
+PYPL,PayPal Holdings Inc.,equity,Financial Technology,Underperformer post-2021
+WBA,Walgreens Boots Alliance,equity,Healthcare / Retail,Underperformer incluido para mitigar survivorship bias
+CTSH,Cognizant Technology Solutions,equity,Technology,
+EA,Electronic Arts Inc.,equity,Communication Services,
+KLAC,KLA Corporation,equity,Technology,
+MCHP,Microchip Technology Inc.,equity,Technology,
+CDNS,Cadence Design Systems Inc.,equity,Technology,
+SNPS,Synopsys Inc.,equity,Technology,
+MNST,Monster Beverage Corporation,equity,Consumer Staples,
+WDAY,Workday Inc.,equity,Technology,
+IDXX,IDEXX Laboratories Inc.,equity,Healthcare,
+NXPI,NXP Semiconductors N.V.,equity,Technology,
+CHKP,Check Point Software Technologies,equity,Technology,
+TLT,iShares 20+ Year Treasury Bond ETF,bond,Fixed Income,Refugio en crisis; correlación negativa con renta variable
+IEF,iShares 7-10 Year Treasury Bond ETF,bond,Fixed Income,Estabilidad; menor duración que TLT — menos sensible a tipos
+GLD,SPDR Gold Shares ETF,gold,Commodities,Refugio clásico; descorrelacionado de acciones y bonos
+XLU,Utilities Select Sector SPDR Fund,defensive_equity,Utilities,Sector defensivo; baja correlación con tecnología
+XLP,Consumer Staples Select Sector SPDR Fund,defensive_equity,Consumer Staples,Sector defensivo; empresas como P&G y Coca-Cola
+EFA,iShares MSCI EAFE ETF,international_equity,International,Diversificación geográfica (Europa + Japón + Australia ex-EE.UU.)

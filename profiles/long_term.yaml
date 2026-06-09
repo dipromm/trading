@@ -1,0 +1,38 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Perfil: LONG-TERM (Largo Plazo)
+# ──────────────────────────────────────────────────────────────────────────────
+# Rebalanceo mensual (~21 días hábiles). Ventanas de indicadores más largas.
+# Penalización por operaciones poco frecuente → comisiones tienen menos impacto.
+# Comparar sus métricas con el perfil Swing es un experimento valioso.
+# ──────────────────────────────────────────────────────────────────────────────
+
+profile:
+  name: "long_term"
+  description: "Rebalanceo mensual, ventanas largas. Mínimo ruido de trading."
+  signal_frequency: "monthly"
+  rebalancing_days: 21            # Rebalancear cada ~1 mes en días hábiles
+  holding_horizon_hint_days: 90   # Orientativo; posiciones de meses
+
+data:
+  lookback_years: 10              # Necesita más historia para ventanas largas
+
+# Override de features para usar ventanas más largas
+matematico:
+  features_override:
+    sma_windows: [50, 200]        # SMAs de largo plazo en vez de 10/30
+    rsi_window: 28                # RSI de 4 semanas en vez de 14 días
+    macd_windows: [26, 52, 9]     # MACD semanal aprox
+    bollinger_window: 40
+    atr_window: 28
+
+backtester:
+  # Mismas comisiones, pero se aplican muchas menos veces al mes
+  commission_pct: 0.0010
+
+risk_manager:
+  kelly_fraction: 0.5             # Half-Kelly igual que Swing
+  max_position_pct: 0.20          # Concentración mayor permitida: horizonte más largo
+  stop_loss_atr_mult: 5.0         # Stop-loss más holgado para aguantar volatilidad
+
+# Uso:
+#   python run.py --profile profiles/long_term.yaml

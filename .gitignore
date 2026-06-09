@@ -1,0 +1,55 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Entornos virtuales ────────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+.env
+
+# ── Datos (no versionar datos descargados, solo el CSV de tickers) ────────────
+data/raw/
+data/cache/
+data/processed/
+!data/nasdaq100_top40_2018-01-01.csv   # El universo de tickers SÍ se versiona
+
+# ── Modelos entrenados ────────────────────────────────────────────────────────
+*.pkl
+*.joblib
+*.pt
+*.pth
+*.h5
+
+# ── Logs y experimentos ───────────────────────────────────────────────────────
+logs/trades/*.json
+logs/trades/*.jsonl
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Streamlit ─────────────────────────────────────────────────────────────────
+.streamlit/secrets.toml
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+.env
+*.env
+secrets.yaml
