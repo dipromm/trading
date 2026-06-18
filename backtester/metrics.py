@@ -31,11 +31,19 @@ def sharpe_ratio(
     Returns:
         Sharpe Ratio anualizado. Objetivo: > 1.0 en walk-forward.
     """
-    if returns.empty or returns.std() == 0:
+    if returns.empty:
         return 0.0
     daily_rf = risk_free_rate / periods_per_year
     excess = returns - daily_rf
-    return excess.mean() / excess.std() * np.sqrt(periods_per_year)
+    std = excess.std()
+    if std == 0:
+        mean = excess.mean()
+        if mean > 0:
+            return float("inf")
+        if mean < 0:
+            return float("-inf")
+        return 0.0
+    return excess.mean() / std * np.sqrt(periods_per_year)
 
 
 def max_drawdown(equity_curve: pd.Series) -> float:

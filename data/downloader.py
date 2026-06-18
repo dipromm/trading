@@ -65,7 +65,7 @@ def download_ticker(
         logger.debug(f"[{ticker}] Desde caché")
         return pd.read_parquet(cache_file)
 
-    logger.info(f"[{ticker}] Descargando ({start} → {end})")
+    logger.info(f"[{ticker}] Descargando ({start} -> {end})")
     try:
         df = yf.download(ticker, start=start, end=end, auto_adjust=True, progress=False)
 
@@ -190,6 +190,6 @@ if __name__ == "__main__":
     data = download_all(config=cfg, force_download=args.force)
     print(f"\nResumen: {len(data)} tickers descargados correctamente.")
     for ticker, df in list(data.items())[:3]:
-        print(f"  {ticker}: {len(df)} filas | {df.index[0].date()} → {df.index[-1].date()}")
+        print(f"  {ticker}: {len(df)} filas | {df.index[0].date()} -> {df.index[-1].date()}")
     if len(data) > 3:
         print(f"  ... y {len(data) - 3} más.")

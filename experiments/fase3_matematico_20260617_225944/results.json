@@ -1,0 +1,87 @@
+{
+  "timestamp": "20260617_225944",
+  "config_hash": "1781039424.9554174",
+  "mas": {
+    "metrics": {
+      "total_return_pct": 37.66,
+      "annualized_return_pct": 9.37,
+      "sharpe_ratio": 0.568,
+      "max_drawdown_pct": -25.71,
+      "calmar_ratio": 0.365,
+      "win_rate_pct": 50.95,
+      "n_trading_days": 1005
+    },
+    "window_results": [
+      {
+        "total_return_pct": 19.91,
+        "annualized_return_pct": 19.14,
+        "sharpe_ratio": 1.364,
+        "max_drawdown_pct": -7.51,
+        "calmar_ratio": 2.549,
+        "win_rate_pct": 53.17,
+        "n_trading_days": 252,
+        "iteration": 1,
+        "val_start": "2021-01-01",
+        "val_end": "2022-01-01",
+        "n_tickers": 45
+      },
+      {
+        "total_return_pct": -18.6,
+        "annualized_return_pct": -17.97,
+        "sharpe_ratio": -0.774,
+        "max_drawdown_pct": -25.23,
+        "calmar_ratio": -0.712,
+        "win_rate_pct": 45.42,
+        "n_trading_days": 251,
+        "iteration": 2,
+        "val_start": "2022-01-01",
+        "val_end": "2023-01-01",
+        "n_tickers": 45
+      },
+      {
+        "total_return_pct": 28.77,
+        "annualized_return_pct": 26.43,
+        "sharpe_ratio": 1.935,
+        "max_drawdown_pct": -9.56,
+        "calmar_ratio": 2.765,
+        "win_rate_pct": 52.8,
+        "n_trading_days": 250,
+        "iteration": 3,
+        "val_start": "2023-01-01",
+        "val_end": "2024-01-01",
+        "n_tickers": 45
+      },
+      {
+        "total_return_pct": 9.53,
+        "annualized_return_pct": 9.93,
+        "sharpe_ratio": 0.773,
+        "max_drawdown_pct": -7.29,
+        "calmar_ratio": 1.362,
+        "win_rate_pct": 52.38,
+        "n_trading_days": 252,
+        "iteration": 4,
+        "val_start": "2024-01-01",
+        "val_end": "2025-01-01",
+        "n_tickers": 45
+      }
+    ]
+  },
+  "buy_and_hold": {
+    "total_return_pct": 67.9,
+    "annualized_return_pct": 15.25,
+    "sharpe_ratio": 0.723,
+    "max_drawdown_pct": -31.36,
+    "calmar_ratio": 0.486,
+    "win_rate_pct": 52.44,
+    "n_trading_days": 1003
+  },
+  "sma_crossover": {
+    "total_return_pct": 14.47,
+    "annualized_return_pct": 4.21,
+    "sharpe_ratio": 0.329,
+    "max_drawdown_pct": -22.25,
+    "calmar_ratio": 0.189,
+    "win_rate_pct": 54.08,
+    "n_trading_days": 1004
+  }
+}

@@ -160,7 +160,12 @@ def compute_all_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Target: retorno del día SIGUIENTE (shift(-1) = mirar un día hacia adelante)
     # ATENCIÓN: este campo solo se usa para entrenar, nunca como feature de entrada.
+    # El último día siempre tiene NaN (no hay T+1) — se excluye en Matematico._clean().
     features["target_return_1d"] = close.pct_change(1).shift(-1)
-    features["target_binary"] = (features["target_return_1d"] > 0).astype(int)
+    features["target_binary"] = np.where(
+        features["target_return_1d"].isna(),
+        np.nan,
+        (features["target_return_1d"] > 0).astype(float),
+    )
 
     return features
