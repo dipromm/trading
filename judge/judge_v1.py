@@ -99,7 +99,6 @@ class JuezV1:
             base = XGBClassifier(
                 random_state=self._random_state,
                 eval_metric="logloss",
-                use_label_encoder=False,
             )
 
         self.model = CalibratedClassifierCV(

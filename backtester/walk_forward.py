@@ -1,25 +1,33 @@
 """
-Validación Walk-Forward.
+Validacion Walk-Forward.
 
-Implementa la estrategia de validación temporal que garantiza resultados
-estadísticamente creíbles y sin data leakage entre entrenamientos.
+Implementa la estrategia de validacion temporal que garantiza resultados
+estadisticamente creibles y sin data leakage entre entrenamientos.
 
-Estructura de ventanas (con config por defecto: 3 años train, 1 año val):
+Estructura de ventanas (con config por defecto: 3 anos train, 1 ano val):
 
-    ITER 1: ENTRENA [2018-2020] ──────────────── VALIDA [2021]
-    ITER 2: ENTRENA [2018-2021] ─────────────────────── VALIDA [2022]
-    ITER 3: ENTRENA [2018-2022] ────────────────────────────── VALIDA [2023]
-    ITER 4: ENTRENA [2018-2023] ─────────────────────────────────── VALIDA [2024]
-    HOLDOUT [2025]: ████████████████ NO TOCAR hasta que el sistema esté finalizado
+    ITER 1: ENTRENA [2018-2020] -> VALIDA [2021]
+    ITER 2: ENTRENA [2018-2021] -> VALIDA [2022]
+    ITER 3: ENTRENA [2018-2022] -> VALIDA [2023]
+    ITER 4: ENTRENA [2018-2023] -> VALIDA [2024]
+    HOLDOUT [2025]: NO TOCAR hasta que el sistema este finalizado
 
-Las predicciones de validación de todas las iteraciones se concatenan para
-obtener ~4 años de predicciones out-of-sample sobre las que calcular las métricas finales.
+Las predicciones de validacion de todas las iteraciones se concatenan para
+obtener ~4 anos de predicciones out-of-sample sobre las que calcular las metricas finales.
 
 NOTA sobre el Juez:
-    En la Iteración 1, el Juez no tiene datos previos de agentes para entrenarse.
-    El Juez en la Iteración 1 actúa como pass-through del Matemático.
+    En la Iteracion 1, el Juez no tiene datos previos de agentes para entrenarse.
+    El Juez en la Iteracion 1 actua como pass-through del Matematico.
     En Iteraciones 2+, el Juez se entrena con las predicciones de los agentes
-    de la iteración anterior.
+    de la iteracion anterior.
+
+NOTA sobre multi-agente (Fase 4+):
+    Cuando el dict de agentes contiene mas de un agente predictor
+    (e.g. matematico + analista), el walk-forward:
+    1. Entrena y predice con cada agente por separado
+    2. Entrena al Juez como meta-modelo con las senales combinadas
+    3. Predice por ticker combinando las senales de todos los agentes
+    4. Fallback al Matematico si el Juez retorna NaN (e.g. sin noticias)
 """
 
 from __future__ import annotations
@@ -126,6 +134,54 @@ def generate_windows(config: dict | None = None) -> list[WalkForwardWindow]:
     return windows
 
 
+def _combine_agent_signals(
+    judge,
+    ticker_probs_mat: dict[str, pd.Series],
+    ticker_probs_ana: dict[str, pd.Series],
+    veto: pd.Series,
+) -> pd.DataFrame:
+    """
+    Combine agent predictions through the Juez.
+
+    In pass-through mode (Phase 3 or Iter 1): returns Matematico signals directly.
+    In meta-model mode (Phase 4+ Iter 2+): runs per-ticker through the meta-model
+    and falls back to Matematico for tickers without Analista coverage.
+    """
+    if judge.is_pass_through or not ticker_probs_ana:
+        signals_df = pd.DataFrame(ticker_probs_mat)
+        return judge.predict(signals_df, veto_signal=veto)
+
+    per_ticker_signals: dict[str, pd.Series] = {}
+    for ticker, mat_probs in ticker_probs_mat.items():
+        agent_data = pd.DataFrame({"matematico": mat_probs})
+        if ticker in ticker_probs_ana:
+            agent_data["analista"] = ticker_probs_ana[ticker].reindex(
+                mat_probs.index,
+            )
+        else:
+            agent_data["analista"] = np.nan
+
+        result = judge.predict(agent_data, veto_signal=veto)
+        per_ticker_signals[ticker] = result["prob_up"]
+
+    final = pd.DataFrame(per_ticker_signals)
+
+    # Fallback: where the Juez returns NaN (e.g. ticker has no news),
+    # use the Matematico's direct signal (still apply veto)
+    for ticker in final.columns:
+        nan_mask = final[ticker].isna()
+        if nan_mask.any() and ticker in ticker_probs_mat:
+            fallback = ticker_probs_mat[ticker].reindex(final.index)
+            veto_dates = veto.index[veto == 1] if veto is not None else pd.Index([])
+            common_veto = fallback.index.intersection(veto_dates)
+            if not common_veto.empty:
+                fallback = fallback.copy()
+                fallback.loc[common_veto] = 0.0
+            final[ticker] = final[ticker].fillna(fallback)
+
+    return final
+
+
 class WalkForwardValidator:
     """
     Orquestador del proceso walk-forward completo.
@@ -179,28 +235,36 @@ class WalkForwardValidator:
         Args:
             agents: Dict de agentes activos. Debe contener al menos
                     ``{"matematico": Matematico()}``.
+                    Opcionalmente: ``{"matematico": ..., "analista": ...}``
+                    para Fase 4+ (multi-agente).
             judge: Instancia de ``JuezV1``. Comienza en modo pass-through
-                   y pasa a meta-modelo a partir de la Iteración 2 (Fase 4+).
+                   y pasa a meta-modelo a partir de la Iteracion 2 (Fase 4+).
             gestor: Instancia de ``GestorRiesgos``.
             prices: ``{ticker: OHLCV DataFrame}`` de ``download_all()``.
                     Las columnas deben incluir ``"Close"`` (tal como yfinance las entrega).
             features: ``{ticker: features DataFrame}`` de ``compute_all_features()``.
+                      Si el Analista esta activo, deben incluir ``sentiment_raw``.
             ticker_classes: ``{ticker: asset_class}`` para caps diferenciados.
-                            Si None, se infiere automáticamente: ETFs del Plan
+                            Si None, se infiere automaticamente: ETFs del Plan
                             se asignan a su clase, el resto es ``"equity"``.
 
         Returns:
             dict con:
-              - ``equity_curve``: Series encadenada de todo el período out-of-sample
+              - ``equity_curve``: Series encadenada de todo el periodo out-of-sample
               - ``daily_returns``: Series de retornos diarios encadenados
-              - ``metrics``: dict con Sharpe, MaxDD, Calmar, WinRate del período completo
-              - ``window_results``: lista de métricas por ventana
+              - ``metrics``: dict con Sharpe, MaxDD, Calmar, WinRate del periodo completo
+              - ``window_results``: lista de metricas por ventana
         """
         from backtester.engine import BacktestEngine
         from backtester.metrics import summary
 
         engine = BacktestEngine(self.config)
         matematico = agents["matematico"]
+        analista = agents.get("analista")
+        has_analista = analista is not None
+
+        if has_analista:
+            logger.info("Multi-agente activo: Matematico + Analista")
 
         if ticker_classes is None:
             ticker_classes = _build_ticker_classes(list(features.keys()), self.config)
@@ -208,8 +272,6 @@ class WalkForwardValidator:
         all_returns: list[pd.Series] = []
         window_results: list[dict] = []
 
-        # Para entrenar el Juez en la iteración siguiente (Fase 4+):
-        # Cada fila = (fecha, ticker) con columnas = señales de agentes.
         prev_judge_inputs: pd.DataFrame | None = None
         prev_judge_targets: pd.Series | None = None
 
@@ -220,16 +282,12 @@ class WalkForwardValidator:
                 window.val_start, window.val_end,
             )
 
-            # ── 1. Cortar datos por ventana ────────────────────────────────
-            # Anti-leakage: .loc[start:train_end] es inclusivo en pandas.
-            # train_end = val_start, así que sin el iloc[:-1] estaríamos
-            # incluyendo val_start en el entrenamiento.
+            # -- 1. Cortar datos por ventana --
             train_feats_per_ticker: dict[str, pd.DataFrame] = {}
             val_feats: dict[str, pd.DataFrame] = {}
 
             for ticker, df in features.items():
                 t_sl = df.loc[window.train_start:window.train_end]
-                # Excluir la última fila si coincide con val_start
                 if not t_sl.empty and str(t_sl.index[-1].date()) >= window.val_start:
                     t_sl = t_sl.iloc[:-1]
                 if not t_sl.empty:
@@ -243,15 +301,25 @@ class WalkForwardValidator:
                 logger.warning("Iter %d: sin datos de entrenamiento, saltando", window.iteration)
                 continue
 
-            # ── 2. Entrenar el Matemático en todos los tickers ─────────────
-            # Concatenar todas las filas de todos los tickers.
-            # ignore_index=True: sklearn no usa el índice; evita DatetimeIndex duplicado.
+            # -- 2. Entrenar el Matematico --
             train_all = pd.concat(
                 list(train_feats_per_ticker.values()), ignore_index=True,
             )
             matematico.fit(train_all)
 
-            # ── 3. Ratio b por ticker (ganancia/pérdida en entrenamiento) ──
+            # -- 2b. Entrenar el Analista (si esta activo) --
+            analista_active_this_window = False
+            if has_analista:
+                try:
+                    analista.fit(train_all)
+                    analista_active_this_window = True
+                    logger.info("  Analista entrenado OK")
+                except ValueError as exc:
+                    logger.warning(
+                        "  Analista no pudo entrenarse (datos insuficientes): %s", exc,
+                    )
+
+            # -- 3. Ratio b por ticker --
             b_per_ticker: dict[str, float] = {}
             for ticker, t_sl in train_feats_per_ticker.items():
                 if "return_1d" in t_sl.columns:
@@ -262,42 +330,64 @@ class WalkForwardValidator:
                 else:
                     b_per_ticker[ticker] = 1.0
 
-            # ── 4. Predecir por ticker en el período de validación ─────────
-            ticker_probs: dict[str, pd.Series] = {}
+            # -- 4. Predecir por ticker (Matematico) --
+            ticker_probs_mat: dict[str, pd.Series] = {}
             for ticker, v_sl in val_feats.items():
                 if v_sl.empty:
                     continue
-                probs = matematico.predict(v_sl)
-                ticker_probs[ticker] = probs
+                ticker_probs_mat[ticker] = matematico.predict(v_sl)
 
-            if not ticker_probs:
-                logger.warning("Iter %d: sin predicciones de validación, saltando", window.iteration)
+            if not ticker_probs_mat:
+                logger.warning("Iter %d: sin predicciones de validacion, saltando", window.iteration)
                 continue
 
-            # signals_df: index=fechas, columns=tickers, values=p ∈ [0,1]
-            signals_df = pd.DataFrame(ticker_probs)
+            # -- 4b. Predecir por ticker (Analista, si activo) --
+            ticker_probs_ana: dict[str, pd.Series] = {}
+            if analista_active_this_window:
+                for ticker, v_sl in val_feats.items():
+                    if v_sl.empty:
+                        continue
+                    preds = analista.predict(v_sl)
+                    non_nan = preds.notna().sum()
+                    if non_nan > 0:
+                        ticker_probs_ana[ticker] = preds
 
-            # ── 5. Entrenar el Juez con datos de la iteración anterior ──────
-            # En Iteración 1: el Juez permanece en modo pass-through.
-            # En Iteraciones 2+: se entrena si prev_judge_inputs tiene ≥ 2 agentes.
-            # (En Fase 3 con solo el Matemático, raise ValueError -> se ignora.)
+                logger.info(
+                    "  Analista: predicciones para %d/%d tickers",
+                    len(ticker_probs_ana), len(ticker_probs_mat),
+                )
+
+            # -- 5. Entrenar el Juez con datos de la iteracion anterior --
             if prev_judge_inputs is not None and prev_judge_targets is not None:
                 try:
                     judge.fit(prev_judge_inputs, prev_judge_targets)
                     logger.info(
-                        "Iter %d: Juez entrenado con predicciones de iter anterior", window.iteration,
+                        "Iter %d: Juez entrenado con predicciones de iter anterior "
+                        "(columnas: %s)",
+                        window.iteration,
+                        list(prev_judge_inputs.columns),
                     )
                 except ValueError as exc:
                     logger.debug(
-                        "Iter %d: Juez permanece en pass-through — %s", window.iteration, exc,
+                        "Iter %d: Juez permanece en pass-through -- %s",
+                        window.iteration, exc,
                     )
 
-            # ── 6. El Juez emite la señal final ───────────────────────────
-            # veto_signal: todo ceros (sin Conspiranoico aún en Fase 3)
-            veto = pd.Series(0, index=signals_df.index, dtype=int)
-            final_signals = judge.predict(signals_df, veto_signal=veto)
+            # -- 6. El Juez emite la senal final --
+            veto = pd.Series(
+                0,
+                index=pd.DataFrame(ticker_probs_mat).index,
+                dtype=int,
+            )
 
-            # ── 7. Calcular fracciones de Kelly por (fecha, ticker) ────────
+            final_signals = _combine_agent_signals(
+                judge=judge,
+                ticker_probs_mat=ticker_probs_mat,
+                ticker_probs_ana=ticker_probs_ana,
+                veto=veto,
+            )
+
+            # -- 7. Calcular fracciones de Kelly por (fecha, ticker) --
             kelly_records: dict = {}
             for fecha in final_signals.index:
                 raw: dict[str, float] = {}
@@ -323,7 +413,7 @@ class WalkForwardValidator:
                 .fillna(0.0)
             )
 
-            # ── 8. ATR para stop-loss dinámico ─────────────────────────────
+            # -- 8. ATR para stop-loss dinamico --
             atr_cols = {
                 t: val_feats[t]["atr"]
                 for t in val_feats
@@ -331,7 +421,7 @@ class WalkForwardValidator:
             }
             atr_data = pd.DataFrame(atr_cols) if atr_cols else None
 
-            # ── 9. Ejecutar el backtest de esta ventana ────────────────────
+            # -- 9. Ejecutar el backtest de esta ventana --
             engine.reset()
             equity, returns = engine.run(
                 prices=prices,
@@ -341,7 +431,6 @@ class WalkForwardValidator:
                 atr_data=atr_data,
             )
 
-            # Cerrar posiciones abiertas al final de la ventana (trade log completo)
             if not final_signals.empty:
                 last_fecha = final_signals.index[-1]
                 last_prices = {
@@ -360,7 +449,7 @@ class WalkForwardValidator:
                 "iteration": window.iteration,
                 "val_start": window.val_start,
                 "val_end": window.val_end,
-                "n_tickers": len(ticker_probs),
+                "n_tickers": len(ticker_probs_mat),
             })
             window_results.append(win_metrics)
 
@@ -372,30 +461,28 @@ class WalkForwardValidator:
                 win_metrics["total_return_pct"],
             )
 
-            # ── 10. Preparar datos del Juez para la siguiente iteración ────
-            # Apilar (fecha, ticker) -> {"matematico": p} como filas independientes.
-            # En Fase 4 se añadirán más columnas (analista, cazador...).
+            # -- 10. Preparar datos del Juez para la siguiente iteracion --
             judge_parts: list[pd.DataFrame] = []
             target_parts: list[pd.Series] = []
-            for ticker, probs in ticker_probs.items():
-                judge_parts.append(probs.to_frame(name="matematico"))
+            for ticker, mat_probs in ticker_probs_mat.items():
+                row = mat_probs.to_frame(name="matematico")
+                if ticker in ticker_probs_ana:
+                    row["analista"] = ticker_probs_ana[ticker].reindex(mat_probs.index)
+                judge_parts.append(row)
                 if ticker in val_feats and "target_binary" in val_feats[ticker].columns:
                     target_parts.append(
-                        val_feats[ticker]["target_binary"].reindex(probs.index),
+                        val_feats[ticker]["target_binary"].reindex(mat_probs.index),
                     )
             prev_judge_inputs = pd.concat(judge_parts) if judge_parts else None
             prev_judge_targets = pd.concat(target_parts) if target_parts else None
 
         if not all_returns:
             raise RuntimeError(
-                "Walk-forward completó sin ninguna ventana de validación válida. "
+                "Walk-forward completo sin ninguna ventana de validacion valida. "
                 "Verifica que los datos cubren el rango configurado en config.yaml."
             )
 
-        # ── Resultados finales ─────────────────────────────────────────────
-        # Encadenar retornos: cada ventana empieza en initial_capital pero
-        # los retornos porcentuales se pueden concatenar directamente.
-        # Equity encadenada: (1 + r1)(1 + r2)... × capital_inicial.
+        # -- Resultados finales --
         full_returns = pd.concat(all_returns)
         initial_capital = self.config["backtester"]["initial_capital"]
         full_equity = (1 + full_returns).cumprod() * initial_capital

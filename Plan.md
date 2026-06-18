@@ -149,14 +149,14 @@ El universo de **paper trading / producción** puede evolucionar, con supervisi�
 
 **Objetivo:** pipeline de datos limpio, reproducible y libre de errores antes de tocar ningún modelo.
 
-- [ ] Crear `config.yaml` con todos los parámetros del proyecto (seeds, comisiones, tickers, etc.)
-- [ ] Crear `data/nasdaq100_top40_2018-01-01.csv` con el universo de tickers fijado a esa fecha
-- [ ] Descarga de OHLCV diario para las 30-50 acciones del universo via `yfinance` (2018–hoy)
-- [ ] Ajuste por splits y dividendos (yfinance lo hace automáticamente, pero hay que verificarlo)
-- [ ] Almacenamiento en base de datos local (SQLite o Parquet)
-- [ ] Script de verificación de calidad: gaps, valores nulos, fechas duplicadas
-- [ ] Caché local para no depender de la API en cada ejecución
-- [ ] Cálculo y almacenamiento de features técnicas base: RSI, MACD, Bollinger Bands, ATR, volumen relativo
+- [x] Crear `config.yaml` con todos los parámetros del proyecto (seeds, comisiones, tickers, etc.)
+- [x] Crear `data/nasdaq100_top40_2018-01-01.csv` con el universo de tickers fijado a esa fecha
+- [x] Descarga de OHLCV diario para las 30-50 acciones del universo via `yfinance` (2018–hoy)
+- [x] Ajuste por splits y dividendos (yfinance lo hace automáticamente, pero hay que verificarlo)
+- [x] Almacenamiento en base de datos local (SQLite o Parquet)
+- [x] Script de verificación de calidad: gaps, valores nulos, fechas duplicadas
+- [x] Caché local para no depender de la API en cada ejecución
+- [x] Cálculo y almacenamiento de features técnicas base: RSI, MACD, Bollinger Bands, ATR, volumen relativo
 
 **Entregable:** `data/` con datos limpios y un notebook de exploración que muestre las distribuciones y confirme la ausencia de errores.
 
@@ -166,11 +166,11 @@ El universo de **paper trading / producción** puede evolucionar, con supervisi�
 
 **Objetivo:** el "tubo" de validación que usarán todos los agentes. Sin esto, cualquier resultado es inválido.
 
-- [ ] Implementar backtester propio o integrar `vectorbt` / `backtesting.py`
-- [ ] Implementar **walk-forward validation**: ventanas de entrenamiento rodantes (ej: entrenar en 2018-2020, validar en 2021; entrenar en 2018-2021, validar en 2022; etc.)
-- [ ] Implementar simulación de comisiones: 0,08% por operación
-- [ ] Calcular métricas estándar: Sharpe Ratio, Max Drawdown, % de operaciones ganadoras, Calmar Ratio
-- [ ] Ejecutar y documentar los **dos baselines** (Buy & Hold y SMA Crossover)
+- [x] Implementar backtester propio o integrar `vectorbt` / `backtesting.py`
+- [x] Implementar **walk-forward validation**: ventanas de entrenamiento rodantes (ej: entrenar en 2018-2020, validar en 2021; entrenar en 2018-2021, validar en 2022; etc.)
+- [x] Implementar simulación de comisiones: 0,08% por operación
+- [x] Calcular métricas estándar: Sharpe Ratio, Max Drawdown, % de operaciones ganadoras, Calmar Ratio
+- [x] Ejecutar y documentar los **dos baselines** (Buy & Hold y SMA Crossover)
 
 **Entregable:** `backtester/` con los resultados de los baselines documentados. Estos son los números a batir.
 
@@ -182,18 +182,18 @@ El universo de **paper trading / producción** puede evolucionar, con supervisi�
 
 **Objetivo:** sistema funcional de extremo a extremo. Datos → modelo → decisión → backtesting → métricas.
 
-- [ ] Entrenar **El Matemático**: XGBoost con las features técnicas de la Fase 1
+- [x] Entrenar **El Matemático**: XGBoost con las features técnicas de la Fase 1
   - Target: **clasificación binaria** — sube (retorno > 0%) / baja (retorno ≤ 0%) el día siguiente
   - **No usar 3 clases** (sube/baja/lateral): el umbral de "lateral" es un hiperparámetro arbitrario que introduce sobreajuste
   - La decisión de "no operar" por baja confianza se delega al Gestor de Riesgos vía Kelly, no al modelo
-- [ ] **Calibración de probabilidades** (obligatorio, dentro de cada ventana walk-forward):
+- [x] **Calibración de probabilidades** (obligatorio, dentro de cada ventana walk-forward):
   - Aplicar **Platt Scaling** (`CalibratedClassifierCV(method='sigmoid')`) como primera opción
   - Verificar con un **reliability diagram** (`calibration_curve` de sklearn): la curva debe aproximarse a la diagonal
   - Si la curva se desvía significativamente, probar **Isotonic Regression** (`method='isotonic'`) como alternativa
   - El output final es una probabilidad calibrada p ∈ [0, 1] que el Gestor de Riesgos usará directamente en Kelly
-- [ ] Implementar **El Juez v1**: pasa directamente la señal calibrada del Matemático
-- [ ] Conectar todo al backtester: el sistema opera automáticamente en el período de validación
-- [ ] Comparar resultados contra los baselines documentados en la Fase 2
+- [x] Implementar **El Juez v1**: pasa directamente la señal calibrada del Matemático
+- [x] Conectar todo al backtester: el sistema opera automáticamente en el período de validación
+- [x] Comparar resultados contra los baselines documentados en la Fase 2
 
 > **Por qué la calibración es prerequisito de Kelly:** Kelly asume que `p` es una probabilidad real. Si el modelo dice 0.8 pero la probabilidad real es 0.55, Kelly calcula una posición absurdamente grande. Con probabilidades descalibradas, ni siquiera Half-Kelly es seguro.
 
@@ -205,13 +205,13 @@ El universo de **paper trading / producción** puede evolucionar, con supervisi�
 
 **Objetivo:** añadir la señal de sentimiento y actualizar el Juez para combinar dos agentes.
 
-- [ ] Integrar fuente de noticias: **Alpaca News API** (gratuita para datos recientes) o NewsAPI
-- [ ] Implementar **El Analista**: pipeline de FinBERT sobre titulares, agregado diario por ticker
+- [x] Integrar fuente de noticias: **Alpaca News API** (gratuita para datos recientes) — `data/news.py`
+- [x] Implementar **El Analista**: pipeline de FinBERT sobre titulares, agregado diario por ticker — `agents/analista.py`
   - Output: score de sentimiento por ticker por día de mercado
   - Manejar la sincronización: noticias de fin de semana se asignan al lunes siguiente
-- [ ] Actualizar **El Juez**: ahora es un meta-modelo (XGBoost o regresión logística) entrenado sobre [señal_matemático, señal_analista] como features
-- [ ] Re-ejecutar backtesting completo con walk-forward
-- [ ] Comparar: ¿añade valor el Analista sobre el Matemático solo?
+- [x] Actualizar **El Juez**: ahora es un meta-modelo (XGBoost o regresión logística) entrenado sobre [señal_matemático, señal_analista] como features — `backtester/walk_forward.py`
+- [x] Re-ejecutar backtesting completo con walk-forward: `python run.py --analista`
+- [x] Comparar: ¿añade valor el Analista sobre el Matemático solo? — Sí: Sharpe +0.044, retorno +6.44 pp (ver Memoria.md §15.5)
 
 ---
 

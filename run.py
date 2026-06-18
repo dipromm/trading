@@ -1,11 +1,12 @@
 """
-run.py — Punto de entrada del sistema MAS para backtest walk-forward.
+run.py -- Punto de entrada del sistema MAS para backtest walk-forward.
 
 Ejecuta el pipeline completo:
-    datos -> features -> Matemático -> Juez v1 -> Gestor de Riesgos -> BacktestEngine
+    datos -> features -> [noticias -> sentimiento] -> agentes -> Juez -> BacktestEngine
 
 Uso:
-    python run.py                      # Run con datos cacheados
+    python run.py                      # Run con Matematico solo (Fase 3)
+    python run.py --analista           # Run con Matematico + Analista (Fase 4)
     python run.py --force-download     # Re-descarga todos los datos
     python run.py --no-baselines       # Saltar comparativa de baselines
     python run.py --debug              # Logging verbose
@@ -15,8 +16,8 @@ Salida en consola:
     - Comparativa contra Buy & Hold y SMA Crossover 20/50
 
 Archivos generados:
-    - logs/trades/trades_iter*.jsonl   — log auditable de operaciones
-    - experiments/<timestamp>/         — config + métricas del experimento
+    - logs/trades/trades_iter*.jsonl   -- log auditable de operaciones
+    - experiments/<timestamp>/         -- config + metricas del experimento
 """
 
 import argparse
@@ -29,7 +30,7 @@ from pathlib import Path
 import pandas as pd
 
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+# -- Logging -------------------------------------------------------------------
 
 def _setup_logging(debug: bool = False) -> None:
     level = logging.DEBUG if debug else logging.INFO
@@ -39,19 +40,22 @@ def _setup_logging(debug: bool = False) -> None:
         datefmt="%H:%M:%S",
         stream=sys.stdout,
     )
-    for noisy in ("yfinance", "urllib3", "requests", "peewee", "xgboost", "numexpr"):
+    for noisy in (
+        "yfinance", "urllib3", "requests", "peewee",
+        "xgboost", "numexpr", "transformers", "torch",
+    ):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-# ── Helpers de presentación ───────────────────────────────────────────────────
+# -- Helpers de presentacion ---------------------------------------------------
 
 def _print_window_table(window_results: list[dict], overall: dict) -> None:
     W = 74
     print("\n" + "=" * W)
-    print(f"{'WALK-FORWARD — RESULTADOS OUT-OF-SAMPLE':^{W}}")
+    print(f"{'WALK-FORWARD -- RESULTADOS OUT-OF-SAMPLE':^{W}}")
     print("=" * W)
     print(
-        f"  {'Ventana':<8} {'Período validación':<22}"
+        f"  {'Ventana':<8} {'Periodo validacion':<22}"
         f" {'Sharpe':>7} {'MaxDD%':>7} {'Ret%':>7} {'Win%':>7} {'Tickers':>8}"
     )
     print("-" * W)
@@ -80,15 +84,16 @@ def _print_comparison_table(
     mas_metrics: dict,
     bh_metrics: dict,
     sma_metrics: dict,
+    mas_label: str = "MAS",
 ) -> None:
     W = 58
     print("\n" + "=" * W)
-    print(f"{'COMPARATIVA CON BASELINES (período out-of-sample)':^{W}}")
+    print(f"{'COMPARATIVA CON BASELINES (periodo out-of-sample)':^{W}}")
     print("=" * W)
     print(f"  {'Estrategia':<24} {'Sharpe':>7} {'MaxDD%':>7} {'Ret%':>7}")
     print("-" * W)
     rows = [
-        ("MAS — Matemático v1", mas_metrics),
+        (mas_label, mas_metrics),
         ("Buy & Hold", bh_metrics),
         ("SMA Crossover 20/50", sma_metrics),
     ]
@@ -113,31 +118,66 @@ def _print_comparison_table(
     print(f"  {'[OK]' if beats_bh else '[!!]'} MAS {'supera' if beats_bh else 'NO supera'} Buy & Hold      "
           f"(delta Sharpe: {mas_sharpe - bh_sharpe:+.3f})")
     print()
-    if beats_bh and beats_sma:
-        print("  -> Criterio de éxito Fase 3 CUMPLIDO.")
-    else:
-        print("  -> Criterio de éxito Fase 3 NO cumplido. Revisar features / hiperparámetros.")
+
+
+def _print_phase4_comparison(
+    mat_only_metrics: dict | None,
+    mat_ana_metrics: dict,
+) -> None:
+    """Print Phase 4 criterion: does adding the Analista improve over Matematico alone?"""
+    if mat_only_metrics is None:
+        return
+
+    W = 58
+    print("\n" + "=" * W)
+    print(f"{'FASE 4: Analista anade valor?':^{W}}")
+    print("=" * W)
+    print(f"  {'Sistema':<28} {'Sharpe':>7} {'MaxDD%':>7} {'Ret%':>7}")
+    print("-" * W)
+    rows = [
+        ("Matematico solo", mat_only_metrics),
+        ("Matematico + Analista", mat_ana_metrics),
+    ]
+    for label, m in rows:
+        print(
+            f"  {label:<28}"
+            f" {m['sharpe_ratio']:>7.3f}"
+            f" {m['max_drawdown_pct']:>7.1f}"
+            f" {m['total_return_pct']:>7.1f}"
+        )
+    print("-" * W)
+
+    delta = mat_ana_metrics["sharpe_ratio"] - mat_only_metrics["sharpe_ratio"]
+    improves = delta > 0
+    print(
+        f"  {'[OK]' if improves else '[!!]'} Delta Sharpe: {delta:+.3f} "
+        f"({'MEJORA' if improves else 'NO MEJORA'})"
+    )
+    print("=" * W)
     print()
 
 
-# ── Persistencia de experimento ───────────────────────────────────────────────
+# -- Persistencia de experimento -----------------------------------------------
 
 def _save_experiment(
     results: dict,
     bh_metrics: dict | None,
     sma_metrics: dict | None,
     config: dict,
+    experiment_name: str = "fase3_matematico",
+    extra: dict | None = None,
 ) -> Path:
-    """Guarda métricas + config en experiments/ para trazabilidad."""
+    """Guarda metricas + config en experiments/ para trazabilidad."""
     import shutil
     import yaml
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    exp_dir = Path(config["general"]["experiments_dir"]) / f"fase3_matematico_{timestamp}"
+    exp_dir = Path(config["general"]["experiments_dir"]) / f"{experiment_name}_{timestamp}"
     exp_dir.mkdir(parents=True, exist_ok=True)
 
     payload = {
         "timestamp": timestamp,
+        "experiment": experiment_name,
         "config_hash": str(Path("config.yaml").stat().st_mtime),
         "mas": {
             "metrics": results["metrics"],
@@ -148,6 +188,8 @@ def _save_experiment(
         payload["buy_and_hold"] = bh_metrics
     if sma_metrics:
         payload["sma_crossover"] = sma_metrics
+    if extra:
+        payload.update(extra)
 
     with open(exp_dir / "results.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, default=str)
@@ -158,20 +200,28 @@ def _save_experiment(
     return exp_dir
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# -- Main ----------------------------------------------------------------------
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Sistema MAS — Backtest Walk-Forward (Fase 3: Matemático)",
+        description="Sistema MAS -- Backtest Walk-Forward",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
+        "--analista", action="store_true",
+        help="Incluir El Analista (FinBERT + noticias). Requiere ALPACA_API_KEY o cache de noticias.",
+    )
+    parser.add_argument(
         "--force-download", action="store_true",
-        help="Re-descarga todos los datos ignorando la caché local",
+        help="Re-descarga todos los datos ignorando la cache local",
+    )
+    parser.add_argument(
+        "--force-sentiment", action="store_true",
+        help="Re-computa sentimiento FinBERT ignorando cache",
     )
     parser.add_argument(
         "--no-baselines", action="store_true",
-        help="Saltar el cálculo de baselines (más rápido, sin comparativa)",
+        help="Saltar el calculo de baselines (mas rapido, sin comparativa)",
     )
     parser.add_argument(
         "--debug", action="store_true",
@@ -182,7 +232,7 @@ def main() -> int:
     _setup_logging(args.debug)
     logger = logging.getLogger(__name__)
 
-    # ── 1. Config y reproducibilidad ──────────────────────────────────────
+    # -- 1. Config y reproducibilidad --
     from utils.config_loader import load_config
     from utils.reproducibility import set_all_seeds
 
@@ -190,35 +240,87 @@ def main() -> int:
     seed = cfg["general"]["random_seed"]
     set_all_seeds(seed)
 
+    use_analista = args.analista
+
     logger.info(
-        "Iniciando run | seed=%d | universo=%s | capital=%.0f€",
+        "Iniciando run | seed=%d | universo=%s | capital=%.0f EUR | analista=%s",
         seed,
         cfg["universe"]["tickers_file"],
         cfg["backtester"]["initial_capital"],
+        "SI" if use_analista else "NO",
     )
 
-    # ── 2. Datos OHLCV ────────────────────────────────────────────────────
-    from data.downloader import download_all
+    # -- 2. Datos OHLCV --
+    from data.downloader import download_all, load_tickers
 
-    logger.info("Paso 1/4: Cargando datos OHLCV (force=%s)...", args.force_download)
+    tickers = load_tickers(cfg)
+    logger.info("Paso 1/5: Cargando datos OHLCV (force=%s)...", args.force_download)
     prices = download_all(cfg, force_download=args.force_download)
 
     if not prices:
-        logger.error("No se obtuvieron datos. Verifica la conexión y el universo CSV.")
+        logger.error("No se obtuvieron datos. Verifica la conexion y el universo CSV.")
         return 1
 
     logger.info("  %d tickers con datos OK", len(prices))
 
-    # ── 3. Features técnicas ──────────────────────────────────────────────
+    # -- 3. Features tecnicas --
     from data.features import compute_all_features
 
-    logger.info("Paso 2/4: Calculando features técnicas...")
+    logger.info("Paso 2/5: Calculando features tecnicas...")
     features: dict = {}
     for ticker, df in prices.items():
         features[ticker] = compute_all_features(df)
     logger.info("  Features calculadas para %d tickers", len(features))
 
-    # ── 4. Walk-forward ───────────────────────────────────────────────────
+    # -- 3b. Noticias + Sentimiento (si --analista) --
+    analista_agent = None
+    if use_analista:
+        logger.info("Paso 3/5: Cargando noticias y precomputando sentimiento...")
+
+        from agents.analista import Analista
+        from data.news import download_all_news, get_trading_dates, load_cached_news
+
+        news_data = download_all_news(
+            tickers=list(prices.keys()),
+            config=cfg,
+            force_download=args.force_download,
+        )
+
+        if not news_data:
+            news_data = load_cached_news(cfg)
+
+        if news_data:
+            trading_dates = get_trading_dates(
+                cfg["data"]["start_date"],
+                cfg["data"]["end_date"],
+            )
+
+            analista_agent = Analista(cfg)
+            sentiment = analista_agent.precompute_sentiment(
+                news_data=news_data,
+                trading_dates=trading_dates,
+                force=args.force_sentiment,
+            )
+
+            features = Analista.merge_sentiment_into_features(features, sentiment)
+
+            coverage = analista_agent.sentiment_coverage(features)
+            avg_coverage = coverage["coverage_pct"].mean()
+            logger.info(
+                "  Cobertura media de sentimiento: %.1f%% (%d tickers con datos)",
+                avg_coverage,
+                (coverage["coverage_pct"] > 0).sum(),
+            )
+        else:
+            logger.warning(
+                "  Sin datos de noticias disponibles. "
+                "Ejecutando sin Analista. Configura ALPACA_API_KEY para descarga."
+            )
+            use_analista = False
+    else:
+        logger.info("Paso 3/5: Noticias omitidas (sin --analista)")
+
+    # -- 4. Walk-forward --
     from agents.gestor_riesgos import GestorRiesgos
     from agents.matematico import Matematico
     from backtester.walk_forward import WalkForwardValidator
@@ -229,26 +331,35 @@ def main() -> int:
     juez = JuezV1(cfg)
     validator = WalkForwardValidator(cfg)
 
+    agents_dict: dict = {"matematico": matematico}
+    if use_analista and analista_agent is not None:
+        agents_dict["analista"] = analista_agent
+
+    n_agents = len(agents_dict)
     n_windows = len(validator.windows)
     logger.info(
-        "Paso 3/4: Walk-forward (%d ventanas | train=%d años | val=%d año)...",
+        "Paso 4/5: Walk-forward (%d ventanas | %d agente%s | train=%d anos | val=%d ano)...",
         n_windows,
+        n_agents,
+        "s" if n_agents > 1 else "",
         cfg["backtester"]["walk_forward_train_years"],
         cfg["backtester"]["walk_forward_val_years"],
     )
 
     results = validator.run(
-        agents={"matematico": matematico},
+        agents=agents_dict,
         judge=juez,
         gestor=gestor,
         prices=prices,
         features=features,
-        # ticker_classes: se carga automáticamente del CSV del universo
     )
+
+    experiment_name = "fase4_mat_analista" if use_analista else "fase3_matematico"
+    mas_label = "MAS (Mat+Analista)" if use_analista else "MAS (Matematico)"
 
     _print_window_table(results["window_results"], results["metrics"])
 
-    # ── 5. Baselines ──────────────────────────────────────────────────────
+    # -- 5. Baselines --
     bh_metrics: dict | None = None
     sma_metrics: dict | None = None
 
@@ -256,12 +367,11 @@ def main() -> int:
         from backtester.metrics import summary
         from baselines import buy_and_hold, sma_crossover
 
-        # Período out-of-sample: mismas fechas que el walk-forward
         oos_start = str(results["daily_returns"].index[0].date())
         oos_end = str(results["daily_returns"].index[-1].date())
 
         logger.info(
-            "Paso 4/4: Calculando baselines [%s -> %s]...", oos_start, oos_end,
+            "Paso 5/5: Calculando baselines [%s -> %s]...", oos_start, oos_end,
         )
 
         bh_equity, bh_rets = buy_and_hold.run(
@@ -274,14 +384,51 @@ def main() -> int:
         )
         sma_metrics = summary(sma_equity, sma_rets)
 
-        _print_comparison_table(results["metrics"], bh_metrics, sma_metrics)
+        _print_comparison_table(results["metrics"], bh_metrics, sma_metrics, mas_label)
     else:
-        logger.info("Paso 4/4: Baselines omitidos (--no-baselines)")
+        logger.info("Paso 5/5: Baselines omitidos (--no-baselines)")
 
-    # ── 6. Guardar experimento ────────────────────────────────────────────
-    _save_experiment(results, bh_metrics, sma_metrics, cfg)
+    # -- 5b. Comparativa Fase 4: Analista anade valor? --
+    extra_data: dict | None = None
+    if use_analista:
+        _load_phase3_and_compare(results, cfg)
+
+    # -- 6. Guardar experimento --
+    _save_experiment(
+        results, bh_metrics, sma_metrics, cfg,
+        experiment_name=experiment_name,
+    )
 
     return 0
+
+
+def _load_phase3_and_compare(results_with_analista: dict, cfg: dict) -> None:
+    """
+    Try to load the latest Phase 3 experiment results for comparison.
+    Prints the Phase 4 comparison table if found.
+    """
+    exp_dir = Path(cfg["general"]["experiments_dir"])
+    if not exp_dir.exists():
+        return
+
+    fase3_dirs = sorted(exp_dir.glob("fase3_matematico_*"), reverse=True)
+    if not fase3_dirs:
+        print("\n  (Sin experimento Fase 3 previo para comparar. "
+              "Ejecuta 'python run.py' sin --analista primero.)")
+        return
+
+    latest = fase3_dirs[0]
+    results_file = latest / "results.json"
+    if not results_file.exists():
+        return
+
+    try:
+        with open(results_file, "r", encoding="utf-8") as f:
+            prev = json.load(f)
+        mat_only_metrics = prev["mas"]["metrics"]
+        _print_phase4_comparison(mat_only_metrics, results_with_analista["metrics"])
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

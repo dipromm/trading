@@ -202,7 +202,7 @@ El sistema es un **ensemble de agentes especializados**. Cada agente evalúa el 
 | Agente | Función | Tecnología | Dificultad | Output al Juez | Estado |
 |---|---|---|---|---|---|
 | **El Matemático** | Análisis técnico (RSI, MACD, ATR, Bollinger) | XGBoost + CalibratedClassifierCV | Media | p ∈ [0,1] calibrada | ✅ Implementado |
-| **El Analista** | Sentimiento de noticias financieras | FinBERT (ProsusAI/finbert) | Media-Alta | p ∈ [0,1] calibrada | 🔲 Stub |
+| **El Analista** | Sentimiento de noticias financieras | FinBERT (ProsusAI/finbert) | Media-Alta | p ∈ [0,1] calibrada | ✅ Implementado |
 | **El Cazador** | Actividad de insiders (SEC Form 4) | OpenInsider + reglas | Media | Señal binaria (alerta/silencio) | 🔲 Stub |
 | **El Conspiranoico** | Detección de régimen anómalo (crisis) | Isolation Forest + HMM | Alta | Veto binario (activo/inactivo) | 🔲 Stub |
 | **El Gestor de Riesgos** | Tamaño de posición + stop-loss | Fractional Kelly (Half-Kelly) | Baja | f* ∈ [0, cap_clase] | ✅ Implementado |
@@ -656,13 +656,102 @@ En la Iteración 1 del walk-forward, el Juez no tiene datos previos → permanec
 
 ### 6.16 `run.py` — Script de ejecución del pipeline completo
 
-**Estado:** Implementado (Junio 2026).
+**Estado:** Actualizado (Junio 2026, Fase 4).
 
-Script de entrada para ejecutar el pipeline MAS completo: descarga datos → calcula features → ejecuta walk-forward → compara con baselines → guarda resultados en `experiments/`.
+Script de entrada para ejecutar el pipeline MAS completo. Soporta dos modos:
+
+- **Fase 3** (`python run.py`): solo Matemático
+- **Fase 4** (`python run.py --analista`): Matemático + Analista
+
+Flags disponibles:
+- `--analista` — incluir El Analista (requiere noticias)
+- `--force-download` — re-descargar OHLCV y noticias
+- `--force-sentiment` — re-computar sentimiento FinBERT
+- `--no-baselines` — saltar comparativa
+- `--debug` — logging verbose
+
+Cuando se usa `--analista`, se añade la comparativa Fase 4: ¿Matemático+Analista supera a Matemático solo? (cargando el último experimento de Fase 3 si existe).
 
 Cada ejecución genera un directorio en `experiments/{nombre}_{timestamp}/` con:
 - `config.yaml` — copia exacta de la configuración usada
 - `results.json` — métricas por ventana walk-forward + métricas agregadas + métricas de baselines
+
+### 6.17 `agents/analista.py` — El Analista (Fase 4)
+
+**Estado:** Completamente implementado (Junio 2026).
+
+**Dos fases de uso:**
+
+1. **Precomputo** (una vez antes del walk-forward):
+   - `precompute_sentiment(news_data, trading_dates)` puntúa todos los titulares con FinBERT
+   - Los scores se agregan por ticker y día de mercado (media por defecto)
+   - El resultado se cachea en `data/cache/sentiment/{ticker}_sentiment.parquet`
+
+2. **Walk-forward** (por cada ventana):
+   - `fit(train_data)` calibra el score de sentimiento contra el target real con `CalibratedClassifierCV(LogisticRegression, method='sigmoid')`
+   - `predict(data)` retorna probabilidad calibrada p ∈ [0,1]
+   - Filas sin dato de sentimiento reciben NaN (gestionado por el fallback al Matemático)
+
+**FinBERT scoring:**
+```python
+if label == "positive":
+    score = 0.5 + raw_score / 2   # Mapea a [0.5, 1.0]
+elif label == "negative":
+    score = 0.5 - raw_score / 2   # Mapea a [0.0, 0.5]
+else:
+    score = 0.5                    # Neutral
+```
+
+**Métodos públicos:**
+- `precompute_sentiment(news_data, trading_dates, cache_dir, force)` — FinBERT batch + agregación + caché
+- `merge_sentiment_into_features(features, sentiment)` (static) — añade columna `sentiment_raw` a cada ticker
+- `fit(train_data)` — entrena calibrador sobre `sentiment_raw` vs `target_binary`
+- `predict(data)` — retorna p ∈ [0,1] calibrada
+- `calibration_report(data)` — Brier Score, Log Loss, datos del reliability diagram
+- `sentiment_coverage(features)` — cobertura de sentimiento por ticker (diagnóstico)
+
+### 6.18 `data/news.py` — Pipeline de noticias financieras (Fase 4)
+
+**Estado:** Completamente implementado (Junio 2026).
+
+**Fuente de datos:** Alpaca News API (gratuita con cuenta paper trading).
+
+**Configuración requerida:**
+- Variables de entorno `ALPACA_API_KEY` y `ALPACA_SECRET_KEY`
+- Obtener gratis en https://alpaca.markets (crear cuenta paper trading)
+
+**Funciones públicas:**
+- `download_all_news(tickers, config, force)` — descarga y cachea noticias en `data/cache/news/{ticker}.parquet`
+- `load_cached_news(config)` — carga noticias desde caché sin descargar
+- `assign_to_trading_days(news_df, trading_dates)` — asigna cada noticia al día de mercado correspondiente
+- `get_trading_dates(start, end)` — obtiene calendario NYSE vía `pandas_market_calendars`
+
+**Sincronización temporal:**
+- Noticias durante horario de mercado → ese día
+- Noticias después de las 16:00 ET → siguiente día hábil
+- Noticias de fin de semana/festivos → siguiente día hábil
+
+**Degradación grácil:** si no hay API keys configuradas, el sistema advierte y continúa sin El Analista.
+
+### 6.19 Walk-Forward actualizado para multi-agente (Fase 4)
+
+**Estado:** Actualizado (Junio 2026).
+
+**Cambios respecto a Fase 3:**
+
+El `WalkForwardValidator.run()` ahora soporta múltiples agentes predictores:
+
+1. **Step 2b (nuevo):** entrena El Analista sobre todos los tickers concatenados. Si falla (datos insuficientes), continúa sin él para esa ventana.
+
+2. **Step 4b (nuevo):** predice con El Analista por ticker. Registra cuántos tickers tienen cobertura de sentimiento.
+
+3. **Step 6 (modificado):** la función `_combine_agent_signals()` gestiona dos modos:
+   - **Pass-through** (Iter 1 o sin Analista): pasa las señales del Matemático directamente al Juez
+   - **Meta-modelo** (Iter 2+ con Analista): combina señales por ticker a través del meta-modelo del Juez, con fallback al Matemático para tickers sin cobertura de noticias
+
+4. **Step 10 (modificado):** los datos para entrenar al Juez en la siguiente iteración incluyen columnas `["matematico", "analista"]` en vez de solo `["matematico"]`.
+
+**Compatibilidad hacia atrás:** si `agents` solo contiene `"matematico"`, el walk-forward funciona exactamente como en Fase 3.
 
 ---
 
@@ -670,22 +759,9 @@ Cada ejecución genera un directorio en `experiments/{nombre}_{timestamp}/` con:
 
 ### 7.1 `agents/analista.py` — El Analista (Fase 4)
 
-**Estado:** Stub con estructura definida.
+**Estado:** ✅ Completamente implementado (Junio 2026).
 
-**Diseño:**
-- Usa FinBERT (`ProsusAI/finbert`) via Hugging Face Transformers
-- **No requiere API de LLM**: FinBERT es un modelo pre-entrenado que se descarga localmente
-- El único coste es la descarga inicial (~438 MB) y la GPU/CPU para inferencia
-- Output: score de sentimiento positivo para cada titular financiero
-- Agregación diaria por ticker: media de los scores de todos los titulares del día
-- Sincronización temporal: noticias publicadas fuera de horario de mercado se asignan a la siguiente apertura
-
-**Fuentes de noticias:**
-- Alpaca News API (gratuita para datos recientes)
-- NewsAPI (100 requests/día, solo 1 mes atrás)
-- Para datos históricos: necesita descarga y caché local previa
-
-**Calibración:** igual que el Matemático, el output del Analista pasa por `CalibratedClassifierCV` antes de enviarse al Juez.
+Ver sección 6.17 para la documentación detallada.
 
 ### 7.2 `agents/cazador.py` — El Cazador (Fase 5)
 
@@ -973,12 +1049,13 @@ c:\Proyectos\trading\
 │   ├── cache/                           # Caché Parquet de yfinance
 │   ├── downloader.py                    # Descarga + caché + control de calidad
 │   ├── features.py                      # Pipeline de features técnicas ✅
+│   ├── news.py                          # Pipeline de noticias (Alpaca API + caché) ✅
 │   └── universe_manager.py             # Gestión del universo de producción ✅
 │
 ├── agents/
 │   ├── base_agent.py                    # Interfaz abstracta (fit, predict, is_fitted) ✅
 │   ├── matematico.py                    # XGBoost + Platt Scaling ✅
-│   ├── analista.py                      # FinBERT + calibración 🔲
+│   ├── analista.py                      # FinBERT + calibración ✅
 │   ├── cazador.py                       # OpenInsider + reglas 🔲
 │   ├── conspiranoico.py                 # Isolation Forest + HMM 🔲
 │   ├── gestor_riesgos.py                # Fractional Kelly + caps + stop-loss ✅
@@ -1261,6 +1338,21 @@ features["target_binary"] = np.where(
 
 **Corrección aplicada en `agents/matematico.py`:** eliminado el parámetro `"use_label_encoder": False` del diccionario `_base_params`. La codificación de labels es automática en versiones modernas de XGBoost y no requiere configuración explícita.
 
+### 12.12 Cobertura de noticias desigual entre tickers — El Analista (Fase 4)
+
+**El problema:** la Alpaca News API no tiene cobertura uniforme para todos los tickers. Empresas grandes (AAPL, MSFT, GOOG) tienen cientos de artículos al día; empresas medianas o ETFs pueden tener días sin ninguna noticia.
+
+**Consecuencia:** si no se maneja, el Analista tendría NaN para muchos tickers/días, y el Juez meta-modelo no podría combinar las señales.
+
+**Solución implementada:**
+1. Los días sin noticias reciben `sentiment_raw = NaN` (no 0.5, para distinguir "sin datos" de "sentimiento neutral")
+2. El Analista retorna `NaN` para esas filas en `predict()`
+3. El Juez meta-modelo detecta NaN en la columna `analista` y esas filas producen NaN en `prob_up`
+4. `_combine_agent_signals()` aplica fallback: para tickers/fechas donde el Juez retorna NaN, se usa la señal del Matemático directamente
+5. `sentiment_coverage()` permite diagnosticar la cobertura por ticker
+
+**Implicación para el backtest:** tickers con poca cobertura de noticias se comportan como si solo tuvieran el Matemático. El Analista añade valor solo donde tiene datos suficientes.
+
 ---
 
 ## 13. Sesgos Conocidos y Limitaciones
@@ -1339,16 +1431,18 @@ La tentación es avanzar a la siguiente fase aunque la anterior no esté limpia.
 - `data/universe_2018-01-01.csv` con los 46 activos
 - `data/features.py` — pipeline completo de features técnicas
 - `data/downloader.py` — descarga, caché y control de calidad
+- `data/news.py` — pipeline de noticias financieras (Alpaca API + caché) ✅ **Nuevo Fase 4**
 - `agents/base_agent.py` — interfaz abstracta
-- `agents/matematico.py` — XGBoost + Platt Scaling completamente implementado (incluye `calibration_report`, `feature_importances`)
+- `agents/matematico.py` — XGBoost + Platt Scaling completamente implementado
+- `agents/analista.py` — FinBERT + Platt Scaling completamente implementado ✅ **Nuevo Fase 4**
 - `agents/gestor_riesgos.py` — Fractional Kelly + caps por clase completamente implementado
 - `backtester/metrics.py` — métricas completas (incluyendo `compare_to_baseline`)
-- `backtester/engine.py` — motor completo con comisiones, stop-loss dinámico y logs auditables (`_buy`, `_sell`, `_check_stop_loss`, `close_all_positions`)
-- `backtester/walk_forward.py` — orquestador walk-forward completo (10 pasos por ventana)
+- `backtester/engine.py` — motor completo con comisiones, stop-loss dinámico y logs auditables
+- `backtester/walk_forward.py` — orquestador walk-forward multi-agente ✅ **Actualizado Fase 4**
 - `baselines/buy_and_hold.py` — implementado
 - `baselines/sma_crossover.py` — implementado (sub-portfolios independientes por ticker)
 - `judge/judge_v1.py` — implementado (modo pass-through + meta-modelo, veto del Conspiranoico)
-- `run.py` — script de ejecución completo con guardado de experimentos
+- `run.py` — script de ejecución con soporte multi-agente ✅ **Actualizado Fase 4**
 - `utils/reproducibility.py` — seeds fijas
 - `utils/config_loader.py` — carga y caché
 - `tests/test_kelly.py` — 24 tests completamente implementados
@@ -1359,14 +1453,13 @@ La tentación es avanzar a la siguiente fase aunque la anterior no esté limpia.
 - `profiles/swing.yaml`, `profiles/long_term.yaml`, `profiles/day_simulated.yaml` — perfiles definidos
 
 **Pendiente (stubs):**
-- `agents/analista.py` → Fase 4
 - `agents/cazador.py` → Fase 5
 - `agents/conspiranoico.py` → Fase 6
 - `dashboard/app.py` → Fase 7
 
-**Fase actual:** Fase 3 completada. Se ejecutó el primer experimento walk-forward con El Matemático + Juez v1 (ver sección 15.4).
+**Fase actual:** Fase 4 completada. Primer experimento walk-forward con Matemático + Analista ejecutado y validado (ver sección 15.5).
 
-**Próximo paso:** Fase 4 — implementar El Analista (FinBERT) y actualizar el Juez para combinar dos agentes. El criterio de éxito es que Matemático+Analista supere a Matemático solo en walk-forward.
+**Próximo paso:** Fase 5 — implementar El Cazador (Form 4 / OpenInsider) y refinar El Gestor de Riesgos.
 
 ### 15.4 Primer experimento ejecutado — Fase 3 MVP (17 Junio 2026)
 
@@ -1406,4 +1499,59 @@ Pipeline: Matemático (XGBoost + Platt Scaling) + Juez v1 (pass-through en iter 
 5. **El año 2022 es el test más difícil:** el mercado cayó un 33% (Nasdaq). Que el sistema perdiera un 18.6% en ese contexto (vs ~33% del mercado) puede interpretarse como una señal positiva de gestión del riesgo, aunque las métricas anuales son negativas.
 
 **Decisión:** continuar con Fase 4 (El Analista). El Conspiranoico (Fase 6) es especialmente relevante para mitigar el problema de 2022.
+
+### 15.5 Primer experimento ejecutado — Fase 4 Analista (19 Junio 2026)
+
+**Experimento:** `experiments/fase4_mat_analista_20260619_004415/`
+
+Pipeline: Matemático (XGBoost + Platt Scaling) + Analista (FinBERT + Platt Scaling) + Juez v1 (pass-through en iter 1, meta-modelo con [matemático, analista] en iters 2-4) + Gestor de Riesgos (Half-Kelly) + BacktestEngine.
+
+**Fuente de noticias:** Alpaca News API (`data.alpaca.markets/v1beta1/news`), caché local en `data/cache/news/` y sentimiento precomputado en `data/cache/sentiment/`.
+
+**Período:** 2021–2024 (4 ventanas walk-forward). Holdout 2025 no tocado.
+
+**Resultados agregados (out-of-sample, 1005 días de trading):**
+
+| Sistema | Retorno Total | Retorno Anual | Sharpe | Max Drawdown | Calmar |
+|---|---|---|---|---|---|
+| **MAS (Mat + Analista)** | +44.10% | +10.68% | 0.612 | -26.57% | 0.402 |
+| **Buy & Hold** | +67.90% | +15.25% | 0.723 | -31.36% | 0.486 |
+| **SMA Crossover** | +14.47% | +4.21% | 0.329 | -22.25% | 0.189 |
+
+**Resultados por ventana walk-forward:**
+
+| Iteración | Período validación | Sharpe | Max DD | Retorno |
+|---|---|---|---|---|
+| 1 | 2021 | **1.356** | -7.67% | +20.62% |
+| 2 | 2022 | -0.782 | -26.18% | -19.64% |
+| 3 | 2023 | **1.998** | -9.54% | +34.24% |
+| 4 | 2024 | 0.840 | -8.28% | +10.75% |
+
+**Comparativa directa con Fase 3 (Matemático solo):**
+
+| Métrica | Fase 3 (Mat solo) | Fase 4 (Mat + Analista) | Delta |
+|---|---|---|---|
+| Sharpe | 0.568 | **0.612** | **+0.044** |
+| Retorno total | +37.66% | **+44.10%** | **+6.44 pp** |
+| Retorno anual | +9.37% | **+10.68%** | +1.31 pp |
+| Max Drawdown | -25.71% | -26.57% | -0.86 pp |
+| Calmar | 0.365 | **0.402** | +0.037 |
+
+**Análisis de los resultados:**
+
+1. **El Analista añade valor sobre el Matemático solo:** Sharpe 0.612 vs 0.568 (+0.044) y retorno total +44.10% vs +37.66% (+6.44 pp). Criterio de éxito de Fase 4 cumplido.
+
+2. **La mejora es modesta pero consistente:** el delta de Sharpe (+0.044) no es espectacular, pero es positivo en el período completo out-of-sample. Las ventanas que más mejoran son 2023 (+0.063 Sharpe) y 2024 (+0.067 Sharpe); 2021 y 2022 permanecen prácticamente iguales.
+
+3. **El ensemble no supera a Buy & Hold en Sharpe:** 0.612 vs 0.723. El gap se reduce respecto a Fase 3 (0.568 vs 0.723), pero sigue sin cerrarse. Max Drawdown del MAS (-26.57%) sigue siendo mejor que Buy & Hold (-31.36%).
+
+4. **2022 sigue siendo el año problemático:** Sharpe -0.782, retorno -19.64%. El Analista no mitiga regímenes bajistas estructurales; eso es tarea del Conspiranoico (Fase 6).
+
+5. **Max Drawdown ligeramente peor que Fase 3:** -26.57% vs -25.71% (+0.86 pp). Trade-off aceptable dado el incremento de retorno, pero documentar como sesgo conocido: más señales activas pueden implicar más exposición en momentos adversos.
+
+6. **Interpretación honesta:** un Sharpe de 0.612 con dos agentes en walk-forward es un resultado técnicamente creíble. La señal de sentimiento aporta información complementaria al análisis técnico, especialmente en regímenes alcistas (2023-2024). No es suficiente por sí sola para alcanzar Sharpe > 1.0 agregado.
+
+**Nota sobre ejecuciones fallidas previas:** las primeras ejecuciones con `--analista` produjeron resultados idénticos a Fase 3 porque la caché de noticias (`data/cache/news/`) contenía archivos Parquet vacíos de un intento sin API keys configuradas. Solución: borrar `data/cache/news/` y `data/cache/sentiment/`, configurar `ALPACA_API_KEY` / `ALPACA_SECRET_KEY`, y re-ejecutar con `--force-download`.
+
+**Decisión:** continuar con Fase 5 (El Cazador + Gestor de Riesgos). El Conspiranoico (Fase 6) sigue siendo prioritario para mitigar el problema de 2022.
 
