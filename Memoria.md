@@ -203,7 +203,7 @@ El sistema es un **ensemble de agentes especializados**. Cada agente evalúa el 
 |---|---|---|---|---|---|
 | **El Matemático** | Análisis técnico (RSI, MACD, ATR, Bollinger) | XGBoost + CalibratedClassifierCV | Media | p ∈ [0,1] calibrada | ✅ Implementado |
 | **El Analista** | Sentimiento de noticias financieras | FinBERT (ProsusAI/finbert) | Media-Alta | p ∈ [0,1] calibrada | ✅ Implementado |
-| **El Cazador** | Actividad de insiders (SEC Form 4) | OpenInsider + reglas | Media | Señal binaria (alerta/silencio) | 🔲 Stub |
+| **El Cazador** | Actividad de insiders (SEC Form 4) | SEC EDGAR + reglas | Media | Señal binaria (alerta/silencio) | ✅ Fase 5 |
 | **El Conspiranoico** | Detección de régimen anómalo (crisis) | Isolation Forest + HMM | Alta | Veto binario (activo/inactivo) | 🔲 Stub |
 | **El Gestor de Riesgos** | Tamaño de posición + stop-loss | Fractional Kelly (Half-Kelly) | Baja | f* ∈ [0, cap_clase] | ✅ Implementado |
 | **El Juez Central** | Combina señales de agentes | v1: Logistic/XGBoost; v2: RL/PPO | Media (v1) | Señal final p ∈ [0,1] | ✅ Implementado |
@@ -765,14 +765,36 @@ Ver sección 6.17 para la documentación detallada.
 
 ### 7.2 `agents/cazador.py` — El Cazador (Fase 5)
 
-**Estado:** Stub con estructura definida.
+**Estado:** ✅ Implementado (Junio 2026).
 
-**Diseño:**
-- Scraping de OpenInsider (no hay API oficial)
-- `time.sleep(2)` entre requests para no saturar el servidor
-- Parsing de Form 4 de SEC/EDGAR (XML — más complejo de lo que parece)
-- Reglas condicionales: CEO/CFO vende > 20% de sus acciones en 30 días → señal bajista
-- **Lag temporal obligatorio:** Form 4 tiene hasta 2 días hábiles de retraso; el backtester aplica ese lag explícitamente para no usar información que el mercado real no tendría
+**Arquitectura:**
+- No usa ML. Reglas condicionales sobre transacciones de insiders de la SEC EDGAR (Form 4).
+- `data/insiders.py` — módulo de datos separado (patrón idéntico a `data/news.py`):
+  - API oficial SEC EDGAR: ticker → CIK, submissions JSON, Form 4 XML parsing con `xml.etree.ElementTree` (stdlib)
+  - `time.sleep(0.12)` entre requests (~8 req/s, bajo el límite de 10 req/s de la SEC)
+  - Caché Parquet por ticker en `data/cache/insiders/`
+  - Solo descarga tickers con `asset_class == "equity"` (los ETFs no tienen Form 4)
+- `Cazador.precompute_insider_signals(tickers)` — precarga caché antes del walk-forward
+- `Cazador.predict_ticker(data, ticker)` — retorna Serie binaria 0/1 por fecha
+
+**Regla de señal:**
+- Si un CEO/CFO/Director/President/COO/CTO vende más del 20% de sus acciones en los últimos 30 días → alerta = 1
+
+**Anti-leakage (obligatorio):**
+- La señal usa `filing_date` (cuando el Form 4 se declara públicamente) + `form4_lag_days=2` días hábiles de shift sobre calendario NYSE.
+- Una transacción en día T solo es visible en el backtest a partir de T + 2 días hábiles.
+- Implementado en `data.insiders.build_alert_series()` y `_add_business_days()`.
+
+**Integración en el pipeline:**
+- Cazador entra como columna binaria `"cazador"` (0/1) en el meta-modelo del Juez junto con `"matematico"` y `"analista"`.
+- `walk_forward.py` paso 4c: `cazador.predict_ticker(v_sl, ticker)` por ticker.
+- `walk_forward.py` paso 10: columna `"cazador"` incluida en `prev_judge_inputs` para entrenamiento del Juez en iter N+1.
+- `agent_votes_log`: los trade logs JSONL ahora incluyen `{"matematico": 0.57, "cazador": 0}` por operación.
+
+**Nota operativa (actualizada):**
+- **Fuente migrada a SEC EDGAR** (junio 2026): OpenInsider bloqueaba conexiones. La nueva implementación usa la API oficial de la SEC (`data.sec.gov`) con parsing de Form 4 XML. Requiere `cazador.sec_user_agent` en `config.yaml` (nombre + email, política fair-access SEC). Rate limit: 10 req/s; el módulo usa 0.12s de pausa.
+- La descarga es one-time con caché Parquet. Si falla, el Cazador retorna silencio (serie de ceros) y el pipeline continúa. El meta-modelo ignorará el feature si siempre es cero.
+- Los códigos de transacción cambian de etiquetas OpenInsider (`"S - Sale"`) a códigos SEC (`"S"`, `"S-"`). El DataFrame de caché anterior es incompatible → borrar `data/cache/insiders/` y re-descargar.
 
 ### 7.3 `agents/conspiranoico.py` — El Conspiranoico (Fase 6)
 
@@ -1056,7 +1078,7 @@ c:\Proyectos\trading\
 │   ├── base_agent.py                    # Interfaz abstracta (fit, predict, is_fitted) ✅
 │   ├── matematico.py                    # XGBoost + Platt Scaling ✅
 │   ├── analista.py                      # FinBERT + calibración ✅
-│   ├── cazador.py                       # OpenInsider + reglas 🔲
+│   ├── cazador.py                       # SEC EDGAR + reglas ✅
 │   ├── conspiranoico.py                 # Isolation Forest + HMM 🔲
 │   ├── gestor_riesgos.py                # Fractional Kelly + caps + stop-loss ✅
 │   └── explorador.py                    # Gestión dinámica del universo v2 🔲
@@ -1111,7 +1133,7 @@ c:\Proyectos\trading\
 | Datos | `yfinance`, `pandas`, `numpy`, `pyarrow`, `pandas-market-calendars` | OHLCV, manipulación, Parquet, calendario NYSE |
 | ML | `scikit-learn`, `xgboost`, `hmmlearn`, `scipy` | Modelos, calibración, HMM, estadística |
 | NLP | `transformers`, `torch` | FinBERT |
-| Web scraping | `requests`, `beautifulsoup4` | OpenInsider, Form 4 |
+| SEC EDGAR API | `requests` | Form 4 (submissions JSON + XML parsing con stdlib `xml.etree`) |
 | Dashboard | `streamlit`, `plotly` | Visualización |
 | Config | `PyYAML`, `tqdm`, `python-dotenv` | Configuración, progreso, variables de entorno |
 | Testing | `pytest`, `pytest-cov` | Tests y cobertura |
@@ -1424,7 +1446,7 @@ FinBERT (`ProsusAI/finbert`) se descarga localmente (~438 MB) y corre en CPU/GPU
 
 La tentación es avanzar a la siguiente fase aunque la anterior no esté limpia. En este proyecto, un bug en el backtester invalida todos los resultados. Cada fase tiene un criterio de éxito explícito que debe cumplirse antes de continuar.
 
-### 15.3 Estado actual del proyecto (18 Junio 2026)
+### 15.3 Estado actual del proyecto (19 Junio 2026)
 
 **Completado:**
 - `config.yaml` con todos los parámetros
@@ -1432,20 +1454,23 @@ La tentación es avanzar a la siguiente fase aunque la anterior no esté limpia.
 - `data/features.py` — pipeline completo de features técnicas
 - `data/downloader.py` — descarga, caché y control de calidad
 - `data/news.py` — pipeline de noticias financieras (Alpaca API + caché) ✅ **Nuevo Fase 4**
+- `data/insiders.py` — pipeline de transacciones de insiders (SEC EDGAR API + caché Parquet) ✅ **Nuevo Fase 5 / migrado EDGAR jun-2026**
 - `agents/base_agent.py` — interfaz abstracta
 - `agents/matematico.py` — XGBoost + Platt Scaling completamente implementado
 - `agents/analista.py` — FinBERT + Platt Scaling completamente implementado ✅ **Nuevo Fase 4**
+- `agents/cazador.py` — reglas SEC EDGAR + lag Form 4 completamente implementado ✅ **Nuevo Fase 5 / migrado EDGAR jun-2026**
 - `agents/gestor_riesgos.py` — Fractional Kelly + caps por clase completamente implementado
 - `backtester/metrics.py` — métricas completas (incluyendo `compare_to_baseline`)
-- `backtester/engine.py` — motor completo con comisiones, stop-loss dinámico y logs auditables
-- `backtester/walk_forward.py` — orquestador walk-forward multi-agente ✅ **Actualizado Fase 4**
+- `backtester/engine.py` — motor completo con comisiones, stop-loss dinámico y logs auditables con `agent_votes`
+- `backtester/walk_forward.py` — orquestador walk-forward multi-agente con Cazador y `agent_votes_log` ✅ **Actualizado Fase 5**
 - `baselines/buy_and_hold.py` — implementado
 - `baselines/sma_crossover.py` — implementado (sub-portfolios independientes por ticker)
 - `judge/judge_v1.py` — implementado (modo pass-through + meta-modelo, veto del Conspiranoico)
-- `run.py` — script de ejecución con soporte multi-agente ✅ **Actualizado Fase 4**
+- `run.py` — script de ejecución con soporte multi-agente y flag `--cazador` ✅ **Actualizado Fase 5**
 - `utils/reproducibility.py` — seeds fijas
 - `utils/config_loader.py` — carga y caché
 - `tests/test_kelly.py` — 24 tests completamente implementados
+- `tests/test_cazador.py` — 33 tests (parsing Form 4 XML, reglas, lag Form 4, agent) ✅ **Nuevo Fase 5**
 - `tests/test_backtester.py` — tests de anti-leakage, comisiones y reproducibilidad implementados
 - `tests/test_data_integrity.py` — tests de calidad de datos implementados
 - `data/universe_manager.py` — gestor del universo de producción (para Fase 9)
@@ -1453,15 +1478,14 @@ La tentación es avanzar a la siguiente fase aunque la anterior no esté limpia.
 - `profiles/swing.yaml`, `profiles/long_term.yaml`, `profiles/day_simulated.yaml` — perfiles definidos
 
 **Pendiente (stubs):**
-- `agents/cazador.py` → Fase 5
 - `agents/conspiranoico.py` → Fase 6
 - `dashboard/app.py` → Fase 7
 
-**Fase actual:** Fase 4 completada. Primer experimento walk-forward con Matemático + Analista ejecutado y validado (ver sección 15.5).
+**Fase actual:** Fase 5 completada. El Cazador implementado y pipeline integrado end-to-end. Ver sección 15.6.
 
-**Próximo paso:** Fase 5 — implementar El Cazador (Form 4 / OpenInsider) y refinar El Gestor de Riesgos.
+**Próximo paso:** Fase 6 — El Conspiranoico (Isolation Forest para detección de régimen), baseline Mat + Cazador (Run A, Sharpe 0.638). Prioritario para mitigar pérdidas en 2022.
 
-### 15.4 Primer experimento ejecutado — Fase 3 MVP (17 Junio 2026)
+### 15.4 Primer experimento ejecutado — Fase 3 MVP
 
 **Experimento:** `experiments/fase3_matematico_20260617_225944/`
 
@@ -1500,7 +1524,7 @@ Pipeline: Matemático (XGBoost + Platt Scaling) + Juez v1 (pass-through en iter 
 
 **Decisión:** continuar con Fase 4 (El Analista). El Conspiranoico (Fase 6) es especialmente relevante para mitigar el problema de 2022.
 
-### 15.5 Primer experimento ejecutado — Fase 4 Analista (19 Junio 2026)
+### 15.5 Primer experimento ejecutado — Fase 4 Analista
 
 **Experimento:** `experiments/fase4_mat_analista_20260619_004415/`
 
@@ -1554,4 +1578,108 @@ Pipeline: Matemático (XGBoost + Platt Scaling) + Analista (FinBERT + Platt Scal
 **Nota sobre ejecuciones fallidas previas:** las primeras ejecuciones con `--analista` produjeron resultados idénticos a Fase 3 porque la caché de noticias (`data/cache/news/`) contenía archivos Parquet vacíos de un intento sin API keys configuradas. Solución: borrar `data/cache/news/` y `data/cache/sentiment/`, configurar `ALPACA_API_KEY` / `ALPACA_SECRET_KEY`, y re-ejecutar con `--force-download`.
 
 **Decisión:** continuar con Fase 5 (El Cazador + Gestor de Riesgos). El Conspiranoico (Fase 6) sigue siendo prioritario para mitigar el problema de 2022.
+
+### 15.6 Experimentos ejecutados — Fase 5 Cazador
+
+Se ejecutaron dos configuraciones el mismo día (19 jun 2026), tras migrar la fuente de datos de OpenInsider a SEC EDGAR:
+
+| Run | Comando | Experimento |
+|---|---|---|
+| **A (recomendado)** | `python run.py --cazador` | `experiments/fase5_mat_cazador_20260619_133226/` |
+| **B** | `python run.py --analista --cazador` | `experiments/fase5_mat_analista_cazador_20260619_135320/` |
+
+Pipeline común: Matemático (XGBoost + Platt Scaling) + Cazador (reglas Form 4 SEC, señal binaria 0/1) + Juez v1 (pass-through en iter 1, meta-modelo con columnas de agentes activos en iters 2-4) + Gestor de Riesgos (Half-Kelly) + BacktestEngine.
+
+**Fuente de insiders:** SEC EDGAR API (`data.sec.gov`), caché local en `data/cache/insiders/` (Parquet por ticker + `_cik_map.json`). Requiere `cazador.sec_user_agent` en `config.yaml`.
+
+**Período:** 2021–2024 (4 ventanas walk-forward). Holdout 2025 no tocado.
+
+#### Run A — Mat + Cazador (mejor resultado Fase 5)
+
+**Experimento:** `experiments/fase5_mat_cazador_20260619_133226/`
+
+**Resultados agregados (out-of-sample, 1005 días de trading):**
+
+| Sistema | Retorno Total | Retorno Anual | Sharpe | Max Drawdown | Calmar |
+|---|---|---|---|---|---|
+| **MAS (Mat + Cazador)** | +49.43% | +11.78% | 0.638 | -27.89% | 0.422 |
+| **Buy & Hold** | +67.90% | +15.25% | 0.723 | -31.36% | 0.486 |
+| **SMA Crossover** | +14.47% | +4.21% | 0.329 | -22.25% | 0.189 |
+
+**Resultados por ventana walk-forward:**
+
+| Iteración | Período validación | Sharpe | Max DD | Retorno |
+|---|---|---|---|---|
+| 1 | 2021 | **1.493** | -7.68% | +22.04% |
+| 2 | 2022 | -0.758 | -27.48% | -20.94% |
+| 3 | 2023 | **2.101** | -10.29% | +40.16% |
+| 4 | 2024 | 0.813 | -8.30% | +10.49% |
+
+#### Run B — Mat + Analista + Cazador
+
+**Experimento:** `experiments/fase5_mat_analista_cazador_20260619_135320/`
+
+**Resultados agregados (out-of-sample, 1005 días de trading):**
+
+| Sistema | Retorno Total | Retorno Anual | Sharpe | Max Drawdown | Calmar |
+|---|---|---|---|---|---|
+| **MAS (Mat + Analista + Cazador)** | +44.80% | +10.81% | 0.619 | -27.59% | 0.392 |
+| **Buy & Hold** | +67.90% | +15.25% | 0.723 | -31.36% | 0.486 |
+| **SMA Crossover** | +14.47% | +4.21% | 0.329 | -22.25% | 0.189 |
+
+**Resultados por ventana walk-forward:**
+
+| Iteración | Período validación | Sharpe | Max DD | Retorno |
+|---|---|---|---|---|
+| 1 | 2021 | **1.493** | -7.68% | +22.04% |
+| 2 | 2022 | -0.772 | -27.18% | -19.82% |
+| 3 | 2023 | **1.993** | -9.62% | +33.79% |
+| 4 | 2024 | 0.832 | -8.48% | +10.60% |
+
+#### Comparativa directa con Fase 4 (Mat + Analista)
+
+Referencia: `experiments/fase4_mat_analista_20260619_004415/` (Sharpe 0.612, retorno +44.10%).
+
+| Métrica | Fase 4 | Run A (Mat+Cazador) | Delta A | Run B (Mat+Ana+Caz) | Delta B |
+|---|---|---|---|---|---|
+| Sharpe | 0.612 | **0.638** | **+0.026** | 0.619 | +0.007 |
+| Retorno total | +44.10% | **+49.43%** | **+5.33 pp** | +44.80% | +0.70 pp |
+| Retorno anual | +10.68% | **+11.78%** | +1.10 pp | +10.81% | +0.13 pp |
+| Max Drawdown | **-26.57%** | -27.89% | -1.32 pp | -27.59% | -1.02 pp |
+| Calmar | 0.402 | **0.422** | +0.020 | 0.392 | -0.010 |
+
+**Comparativa por ventana vs Fase 4 (Sharpe):**
+
+| Ventana | Fase 4 | Run A | Delta A | Run B | Delta B |
+|---|---|---|---|---|---|
+| 2021 | 1.356 | **1.493** | +0.137 | **1.493** | +0.137 |
+| 2022 | -0.782 | -0.758 | +0.024 | -0.772 | +0.010 |
+| 2023 | 1.998 | **2.101** | +0.103 | 1.993 | -0.005 |
+| 2024 | **0.840** | 0.813 | -0.027 | 0.832 | -0.008 |
+
+**Análisis de los resultados:**
+
+1. **El Cazador añade valor sobre Fase 4, pero solo en la config Mat + Cazador (Run A):** Sharpe 0.638 vs 0.612 (+0.026) y retorno total +49.43% vs +44.10% (+5.33 pp). Criterio de éxito de Fase 5 cumplido en Run A.
+
+2. **Mat + Analista + Cazador (Run B) no mejora de forma significativa a Fase 4:** Sharpe 0.619 vs 0.612 (+0.007) y retorno +44.80% vs +44.10% (+0.70 pp). Añadir el Cazador encima del Analista aporta casi nada; Run A supera a Run B en Sharpe (+0.019) y retorno (+4.63 pp).
+
+3. **La mejora del Run A está concentrada en 2021 y 2023:** en 2023 el retorno sube de +34.24% (Fase 4) a +40.16% (+5.92 pp) y el Sharpe de 1.998 a 2.101. En 2024, Fase 4 sigue siendo ligeramente mejor (Sharpe 0.840 vs 0.813), lo que sugiere que el Analista aporta señal útil en el último año cuando no compite con el Cazador solo.
+
+4. **2022 sigue siendo el año problemático:** Sharpe negativo en ambos runs (-0.758 / -0.772). El Cazador no mitiga regímenes bajistas estructurales; eso sigue siendo tarea del Conspiranoico (Fase 6).
+
+5. **Trade-off de riesgo:** Max Drawdown algo peor que Fase 4 (-27.89% vs -26.57% en Run A). Más retorno a cambio de mayor drawdown. Sigue siendo mejor que Buy & Hold (-31.36%).
+
+6. **Iteración 1 idéntica en ambos runs de Fase 5:** en la primera ventana walk-forward el Juez opera en pass-through (solo Matemático); las diferencias aparecen a partir de la iter 2, cuando el meta-modelo entrena con votos de agentes de la ventana anterior.
+
+7. **El ensemble no supera a Buy & Hold en Sharpe:** mejor Run A 0.638 vs 0.723. El gap se reduce respecto a Fase 4 (0.612 vs 0.723), pero no se cierra.
+
+8. **Interpretación honesta:** un Sharpe de 0.638 con Mat + Cazador en walk-forward es el mejor resultado acumulado del proyecto hasta la fecha. La señal de ventas de insiders aporta información complementaria al análisis técnico, especialmente en 2023. No obstante, combinar Analista y Cazador simultáneamente no genera sinergia — posible redundancia de señales o conflicto en el meta-modelo del Juez.
+
+**Nota sobre la fuente de datos:** las primeras implementaciones usaban scraping de OpenInsider, que bloqueaba conexiones. Se migró a SEC EDGAR (junio 2026). Tras la migración, borrar `data/cache/insiders/` si contenía caché del formato antiguo (`transaction_type` = `"S - Sale"` en lugar de `"S"`).
+
+**Config recomendada tras Fase 5:** `python run.py --cazador` (Run A). Para producción futura con todos los agentes activos, evaluar si Analista y Cazador deben coexistir o alternarse por régimen.
+
+**Decisión:** Fase 5 cerrada. Continuar con Fase 6 — El Conspiranoico (Isolation Forest para detección de régimen), usando Run A (Mat + Cazador) como baseline. El Conspiranoico es prioritario para mitigar el problema de 2022.
+
+
 

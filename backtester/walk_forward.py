@@ -23,11 +23,12 @@ NOTA sobre el Juez:
 
 NOTA sobre multi-agente (Fase 4+):
     Cuando el dict de agentes contiene mas de un agente predictor
-    (e.g. matematico + analista), el walk-forward:
+    (e.g. matematico + analista + cazador), el walk-forward:
     1. Entrena y predice con cada agente por separado
     2. Entrena al Juez como meta-modelo con las senales combinadas
     3. Predice por ticker combinando las senales de todos los agentes
     4. Fallback al Matematico si el Juez retorna NaN (e.g. sin noticias)
+    5. Construye agent_votes_log para logs JSONL auditables (XAI)
 """
 
 from __future__ import annotations
@@ -138,6 +139,7 @@ def _combine_agent_signals(
     judge,
     ticker_probs_mat: dict[str, pd.Series],
     ticker_probs_ana: dict[str, pd.Series],
+    ticker_probs_caz: dict[str, pd.Series],
     veto: pd.Series,
 ) -> pd.DataFrame:
     """
@@ -145,9 +147,15 @@ def _combine_agent_signals(
 
     In pass-through mode (Phase 3 or Iter 1): returns Matematico signals directly.
     In meta-model mode (Phase 4+ Iter 2+): runs per-ticker through the meta-model
-    and falls back to Matematico for tickers without Analista coverage.
+    and falls back to Matematico for tickers without secondary-agent coverage.
+
+    Args:
+        ticker_probs_caz: {ticker: binary Series 0/1} from El Cazador.
+                          Tickers absent from this dict get cazador=0 (silence).
     """
-    if judge.is_pass_through or not ticker_probs_ana:
+    has_secondary = bool(ticker_probs_ana or ticker_probs_caz)
+
+    if judge.is_pass_through or not has_secondary:
         signals_df = pd.DataFrame(ticker_probs_mat)
         return judge.predict(signals_df, veto_signal=veto)
 
@@ -155,11 +163,13 @@ def _combine_agent_signals(
     for ticker, mat_probs in ticker_probs_mat.items():
         agent_data = pd.DataFrame({"matematico": mat_probs})
         if ticker in ticker_probs_ana:
-            agent_data["analista"] = ticker_probs_ana[ticker].reindex(
-                mat_probs.index,
-            )
-        else:
+            agent_data["analista"] = ticker_probs_ana[ticker].reindex(mat_probs.index)
+        elif ticker_probs_ana:
             agent_data["analista"] = np.nan
+        if ticker in ticker_probs_caz:
+            agent_data["cazador"] = ticker_probs_caz[ticker].reindex(mat_probs.index).fillna(0)
+        elif ticker_probs_caz:
+            agent_data["cazador"] = 0
 
         result = judge.predict(agent_data, veto_signal=veto)
         per_ticker_signals[ticker] = result["prob_up"]
@@ -261,10 +271,13 @@ class WalkForwardValidator:
         engine = BacktestEngine(self.config)
         matematico = agents["matematico"]
         analista = agents.get("analista")
+        cazador = agents.get("cazador")
         has_analista = analista is not None
+        has_cazador = cazador is not None
 
-        if has_analista:
-            logger.info("Multi-agente activo: Matematico + Analista")
+        active_agents = ["matematico"] + (["analista"] if has_analista else []) + (["cazador"] if has_cazador else [])
+        if len(active_agents) > 1:
+            logger.info("Multi-agente activo: %s", " + ".join(active_agents))
 
         if ticker_classes is None:
             ticker_classes = _build_ticker_classes(list(features.keys()), self.config)
@@ -319,6 +332,10 @@ class WalkForwardValidator:
                         "  Analista no pudo entrenarse (datos insuficientes): %s", exc,
                     )
 
+            # -- 2c. El Cazador no se entrena (basado en reglas) --
+            if has_cazador:
+                cazador.fit(train_all)
+
             # -- 3. Ratio b por ticker --
             b_per_ticker: dict[str, float] = {}
             for ticker, t_sl in train_feats_per_ticker.items():
@@ -357,6 +374,21 @@ class WalkForwardValidator:
                     len(ticker_probs_ana), len(ticker_probs_mat),
                 )
 
+            # -- 4c. Predecir por ticker (Cazador, si activo) --
+            ticker_probs_caz: dict[str, pd.Series] = {}
+            if has_cazador:
+                alerts_total = 0
+                for ticker, v_sl in val_feats.items():
+                    if v_sl.empty:
+                        continue
+                    preds = cazador.predict_ticker(v_sl, ticker)
+                    ticker_probs_caz[ticker] = preds
+                    alerts_total += int(preds.sum())
+                logger.info(
+                    "  Cazador: %d alertas en %d tickers",
+                    alerts_total, len(ticker_probs_caz),
+                )
+
             # -- 5. Entrenar el Juez con datos de la iteracion anterior --
             if prev_judge_inputs is not None and prev_judge_targets is not None:
                 try:
@@ -384,6 +416,7 @@ class WalkForwardValidator:
                 judge=judge,
                 ticker_probs_mat=ticker_probs_mat,
                 ticker_probs_ana=ticker_probs_ana,
+                ticker_probs_caz=ticker_probs_caz,
                 veto=veto,
             )
 
@@ -421,6 +454,27 @@ class WalkForwardValidator:
             }
             atr_data = pd.DataFrame(atr_cols) if atr_cols else None
 
+            # -- 8b. Construir agent_votes_log para logs JSONL auditables --
+            votes_by_date: dict = {}
+            for fecha in final_signals.index:
+                votes_by_date[fecha] = {}
+                for ticker in final_signals.columns:
+                    v: dict = {}
+                    if ticker in ticker_probs_mat:
+                        s = ticker_probs_mat[ticker]
+                        if fecha in s.index and not pd.isna(s.at[fecha]):
+                            v["matematico"] = round(float(s.at[fecha]), 4)
+                    if ticker in ticker_probs_ana:
+                        s = ticker_probs_ana[ticker]
+                        if fecha in s.index and not pd.isna(s.at[fecha]):
+                            v["analista"] = round(float(s.at[fecha]), 4)
+                    if ticker in ticker_probs_caz:
+                        s = ticker_probs_caz[ticker]
+                        if fecha in s.index:
+                            v["cazador"] = int(s.at[fecha])
+                    votes_by_date[fecha][ticker] = v
+            agent_votes_log = pd.DataFrame(votes_by_date, dtype=object).T
+
             # -- 9. Ejecutar el backtest de esta ventana --
             engine.reset()
             equity, returns = engine.run(
@@ -429,6 +483,7 @@ class WalkForwardValidator:
                 kelly_fractions=kelly_df,
                 veto_signal=veto,
                 atr_data=atr_data,
+                agent_votes_log=agent_votes_log,
             )
 
             if not final_signals.empty:
@@ -468,6 +523,8 @@ class WalkForwardValidator:
                 row = mat_probs.to_frame(name="matematico")
                 if ticker in ticker_probs_ana:
                     row["analista"] = ticker_probs_ana[ticker].reindex(mat_probs.index)
+                if ticker in ticker_probs_caz:
+                    row["cazador"] = ticker_probs_caz[ticker].reindex(mat_probs.index).fillna(0)
                 judge_parts.append(row)
                 if ticker in val_feats and "target_binary" in val_feats[ticker].columns:
                     target_parts.append(

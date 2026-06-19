@@ -136,6 +136,7 @@ El universo de **paper trading / producción** puede evolucionar, con supervisi�
 - Evalúa candidatos externos con `yfinance` (correlación con la cartera, calidad de datos, liquidez)
 - Si la correlación media con la cartera < -0.10 → aporta diversificación real
 - → Propone añadirlo y espera aprobación humana
+- *(Extensión futura — ver **RECORDATORIO** en Fase 9)*: criterio adicional con compras de insiders para candidatos ADD
 
 **La aprobación humana es obligatoria** para cualquier cambio. El Explorador nunca modifica el universo directamente; genera recomendaciones en `logs/explorador_recommendations.jsonl` que aparecen en el dashboard para ser aprobadas o rechazadas. Cada cambio aprobado se registra en `logs/universe_changes.jsonl` con fecha, razón y evidencia.
 
@@ -220,24 +221,24 @@ El universo de **paper trading / producción** puede evolucionar, con supervisi�
 **Objetivo:** añadir los agentes más sencillos en implementación pero muy importantes en valor real.
 
 **El Gestor de Riesgos:**
-- [ ] El sistema opera **exclusivamente en Long** (comprar y vender). Sin posiciones cortas: evita complejidades de borrowing fees, margin requirements y short squeeze
-- [ ] Implementar **Fractional Kelly (Half-Kelly)** para el tamaño de posición por ticker:
+- [x] El sistema opera **exclusivamente en Long** (comprar y vender). Sin posiciones cortas: evita complejidades de borrowing fees, margin requirements y short squeeze
+- [x] Implementar **Fractional Kelly (Half-Kelly)** para el tamaño de posición por ticker:
 
 $$f^* = \rho \left( p - \frac{1-p}{b} \right)$$
 
   Donde: `p` = probabilidad calibrada de subida, `b` = ratio ganancia media / pérdida media histórico, `ρ = 0.5` (factor de seguridad Half-Kelly)
 
-- [ ] **Regla de señal negativa:** si `f* ≤ 0` (el modelo predice más probabilidad de bajada que de subida), la acción es: no abrir posición nueva / cerrar posición existente si la hubiera
-- [ ] **Límite de concentración por ticker:** cap diferenciado según clase de activo (15% para acciones, 20% para bonos, 10% para oro/internacional) — `get_position_cap(asset_class)`
-- [ ] **Límite de concentración por clase:** la suma total de cada clase no supera su cap de portfolio (ej: bonos no superan el 30% del capital total) — `normalize_portfolio_by_class()`
-- [ ] **Gestión multi-posición:** la normalización se aplica en tres niveles: cap por ticker → cap por clase → cap total 100%
-- [ ] Implementar stop-loss dinámico: salir automáticamente si la pérdida en un ticker supera N×ATR (N configurable en `config.yaml`)
-- [ ] Integrar como paso final en la cadena de ejecución del Juez: `señal del Juez → Kelly → cap 15% → orden final`
+- [x] **Regla de señal negativa:** si `f* ≤ 0` (el modelo predice más probabilidad de bajada que de subida), la acción es: no abrir posición nueva / cerrar posición existente si la hubiera
+- [x] **Límite de concentración por ticker:** cap diferenciado según clase de activo (15% para acciones, 20% para bonos, 10% para oro/internacional) — `get_position_cap(asset_class)`
+- [x] **Límite de concentración por clase:** la suma total de cada clase no supera su cap de portfolio (ej: bonos no superan el 30% del capital total) — `normalize_portfolio_by_class()`
+- [x] **Gestión multi-posición:** la normalización se aplica en tres niveles: cap por ticker → cap por clase → cap total 100%
+- [x] Implementar stop-loss dinámico: salir automáticamente si la pérdida en un ticker supera N×ATR (N configurable en `config.yaml`)
+- [x] Integrar como paso final en la cadena de ejecución del Juez: `señal del Juez → Kelly → cap 15% → orden final`
 
 **El Cazador de Insiders:**
-- [ ] Integrar API de [OpenInsider](https://openinsider.com) (tiene endpoints accesibles)
-- [ ] Definir reglas condicionales claras: si un CEO/CFO vende >20% de sus acciones en los últimos 30 días → señal bajista con peso fijo
-- [ ] Lag temporal explícito: las declaraciones Form 4 tienen hasta 2 días hábiles de retraso; aplicar ese lag en el backtest
+- [x] Integrar API de [OpenInsider](https://openinsider.com) (tiene endpoints accesibles)
+- [x] Definir reglas condicionales claras: si un CEO/CFO vende >20% de sus acciones en los últimos 30 días → señal bajista con peso fijo
+- [x] Lag temporal explícito: las declaraciones Form 4 tienen hasta 2 días hábiles de retraso; aplicar ese lag en el backtest
 
 ---
 
@@ -306,6 +307,23 @@ $$f^* = \rho \left( p - \frac{1-p}{b} \right)$$
 **Entregable:** flujo completo de recomendación → revisión humana → cambio aplicado, demostrable en el dashboard.
 
 > **Nota de diseño:** El Explorador solo puede proponer retirar activos que ya tenemos datos de trades (porque el sistema ha operado con ellos). Para añadir activos nuevos, usa `yfinance` para descargar datos de mercado del candidato y calcular correlaciones — pero no usa trades propios para esa decisión porque, por definición, no hemos operado ese activo aún.
+
+> ### 🔔 RECORDATORIO — extensión insiders en El Explorador
+>
+> **Esto NO forma parte del MVP de Fase 9.** Es una idea acordada para no olvidar al desarrollar esta fase. Implementar solo después de tener el flujo base (RETIRAR / AÑADIR con yfinance) funcionando y **después de Fase 5** (`data/insiders.py` del Cazador).
+>
+> **Qué es:** usar datos de insiders (OpenInsider / Form 4) como **criterio extra** en `Explorador.evaluate_candidate()` para proponer **AÑADIR** tickers externos a `data/universe_live.csv` — nunca al universo de backtest (`universe_2018-01-01.csv`).
+>
+> **Qué NO es:** no sustituye al Cazador defensivo (ventas → alerta al Juez en backtest). Las **compras de insiders en tickers ya del universo** son trabajo de **Cazador v2** (columna alcista al Juez), no del Explorador.
+>
+> **Implementación prevista (cuando toque):**
+> - Reutilizar `data/insiders.py` (misma caché que El Cazador; no duplicar scraping).
+> - En `evaluate_candidate()`: además de correlación, liquidez y calidad de datos, calcular métricas como `insider_net_buy_pct`, `ceo_buy_flag` (ventana ~90 días, lag Form 4 de 2 días hábiles).
+> - Umbrales en `config.yaml` → `explorador.insider_add` (ej. `min_ceo_buy_pct`, `require_net_buy`).
+> - Mostrar evidencia insiders en la pestaña dashboard y en `logs/explorador_recommendations.jsonl`.
+> - **HITL obligatorio:** insiders solo refuerzan la recomendación; nunca auto-aprueban un ADD.
+>
+> **Orden sugerido:** Fase 5 Cazador (ventas) → Fase 9 Explorador MVP → esta extensión insiders en ADD → opcionalmente Cazador v2 (compras al Juez).
 
 ---
 

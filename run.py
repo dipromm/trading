@@ -2,21 +2,23 @@
 run.py -- Punto de entrada del sistema MAS para backtest walk-forward.
 
 Ejecuta el pipeline completo:
-    datos -> features -> [noticias -> sentimiento] -> agentes -> Juez -> BacktestEngine
+    datos -> features -> [noticias -> sentimiento] -> [insiders] -> agentes -> Juez -> BacktestEngine
 
 Uso:
-    python run.py                      # Run con Matematico solo (Fase 3)
-    python run.py --analista           # Run con Matematico + Analista (Fase 4)
-    python run.py --force-download     # Re-descarga todos los datos
-    python run.py --no-baselines       # Saltar comparativa de baselines
-    python run.py --debug              # Logging verbose
+    python run.py                          # Run con Matematico solo (Fase 3)
+    python run.py --analista               # Run con Matematico + Analista (Fase 4)
+    python run.py --cazador                # Run con Matematico + Cazador (Fase 5)
+    python run.py --analista --cazador     # Run completo Fase 5
+    python run.py --force-download         # Re-descarga todos los datos
+    python run.py --no-baselines           # Saltar comparativa de baselines
+    python run.py --debug                  # Logging verbose
 
 Salida en consola:
     - Tabla con Sharpe, MaxDD, Return por ventana walk-forward
     - Comparativa contra Buy & Hold y SMA Crossover 20/50
 
 Archivos generados:
-    - logs/trades/trades_iter*.jsonl   -- log auditable de operaciones
+    - logs/trades/trades_iter*.jsonl   -- log auditable de operaciones (con agent_votes)
     - experiments/<timestamp>/         -- config + metricas del experimento
 """
 
@@ -212,6 +214,10 @@ def main() -> int:
         help="Incluir El Analista (FinBERT + noticias). Requiere ALPACA_API_KEY o cache de noticias.",
     )
     parser.add_argument(
+        "--cazador", action="store_true",
+        help="Incluir El Cazador (insiders SEC Form 4). Descarga de OpenInsider.",
+    )
+    parser.add_argument(
         "--force-download", action="store_true",
         help="Re-descarga todos los datos ignorando la cache local",
     )
@@ -241,13 +247,15 @@ def main() -> int:
     set_all_seeds(seed)
 
     use_analista = args.analista
+    use_cazador = args.cazador
 
     logger.info(
-        "Iniciando run | seed=%d | universo=%s | capital=%.0f EUR | analista=%s",
+        "Iniciando run | seed=%d | universo=%s | capital=%.0f EUR | analista=%s | cazador=%s",
         seed,
         cfg["universe"]["tickers_file"],
         cfg["backtester"]["initial_capital"],
         "SI" if use_analista else "NO",
+        "SI" if use_cazador else "NO",
     )
 
     # -- 2. Datos OHLCV --
@@ -320,6 +328,27 @@ def main() -> int:
     else:
         logger.info("Paso 3/5: Noticias omitidas (sin --analista)")
 
+    # -- 3c. Insiders (si --cazador) --
+    cazador_agent = None
+    if use_cazador:
+        logger.info("Paso 3c/5: Descargando datos de insiders (OpenInsider)...")
+        from agents.cazador import Cazador
+
+        cazador_agent = Cazador(cfg)
+        try:
+            cazador_agent.precompute_insider_signals(
+                tickers=list(prices.keys()),
+                force_download=args.force_download,
+            )
+        except Exception as exc:
+            logger.warning(
+                "  Error descargando insiders: %s. Ejecutando sin Cazador.", exc,
+            )
+            use_cazador = False
+            cazador_agent = None
+    else:
+        logger.info("Paso 3c/5: Insiders omitidos (sin --cazador)")
+
     # -- 4. Walk-forward --
     from agents.gestor_riesgos import GestorRiesgos
     from agents.matematico import Matematico
@@ -334,14 +363,18 @@ def main() -> int:
     agents_dict: dict = {"matematico": matematico}
     if use_analista and analista_agent is not None:
         agents_dict["analista"] = analista_agent
+    if use_cazador and cazador_agent is not None:
+        agents_dict["cazador"] = cazador_agent
 
     n_agents = len(agents_dict)
+    agent_names = " + ".join(
+        k.capitalize() for k in ["matematico", "analista", "cazador"] if k in agents_dict
+    )
     n_windows = len(validator.windows)
     logger.info(
-        "Paso 4/5: Walk-forward (%d ventanas | %d agente%s | train=%d anos | val=%d ano)...",
+        "Paso 4/5: Walk-forward (%d ventanas | %s | train=%d anos | val=%d ano)...",
         n_windows,
-        n_agents,
-        "s" if n_agents > 1 else "",
+        agent_names,
         cfg["backtester"]["walk_forward_train_years"],
         cfg["backtester"]["walk_forward_val_years"],
     )
@@ -354,8 +387,18 @@ def main() -> int:
         features=features,
     )
 
-    experiment_name = "fase4_mat_analista" if use_analista else "fase3_matematico"
-    mas_label = "MAS (Mat+Analista)" if use_analista else "MAS (Matematico)"
+    if use_analista and use_cazador:
+        experiment_name = "fase5_mat_analista_cazador"
+        mas_label = "MAS (Mat+Analista+Cazador)"
+    elif use_cazador:
+        experiment_name = "fase5_mat_cazador"
+        mas_label = "MAS (Mat+Cazador)"
+    elif use_analista:
+        experiment_name = "fase4_mat_analista"
+        mas_label = "MAS (Mat+Analista)"
+    else:
+        experiment_name = "fase3_matematico"
+        mas_label = "MAS (Matematico)"
 
     _print_window_table(results["window_results"], results["metrics"])
 
@@ -388,9 +431,10 @@ def main() -> int:
     else:
         logger.info("Paso 5/5: Baselines omitidos (--no-baselines)")
 
-    # -- 5b. Comparativa Fase 4: Analista anade valor? --
-    extra_data: dict | None = None
-    if use_analista:
+    # -- 5b. Comparativas entre fases --
+    if use_analista and use_cazador:
+        _load_phase4_and_compare(results, cfg)
+    elif use_analista:
         _load_phase3_and_compare(results, cfg)
 
     # -- 6. Guardar experimento --
@@ -400,6 +444,60 @@ def main() -> int:
     )
 
     return 0
+
+
+def _load_phase4_and_compare(results_with_cazador: dict, cfg: dict) -> None:
+    """
+    Compara el experimento Fase 5 contra el último experimento Fase 4.
+    Imprime tabla de comparativa si hay datos disponibles.
+    """
+    exp_dir = Path(cfg["general"]["experiments_dir"])
+    if not exp_dir.exists():
+        return
+
+    fase4_dirs = sorted(exp_dir.glob("fase4_mat_analista_*"), reverse=True)
+    if not fase4_dirs:
+        print("\n  (Sin experimento Fase 4 previo para comparar. "
+              "Ejecuta 'python run.py --analista' primero.)")
+        return
+
+    latest = fase4_dirs[0]
+    results_file = latest / "results.json"
+    if not results_file.exists():
+        return
+
+    try:
+        with open(results_file, "r", encoding="utf-8") as f:
+            prev = json.load(f)
+        fase4_metrics = prev["mas"]["metrics"]
+        W = 58
+        print("\n" + "=" * W)
+        print(f"{'FASE 5: Cazador anade valor sobre Analista?':^{W}}")
+        print("=" * W)
+        print(f"  {'Sistema':<28} {'Sharpe':>7} {'MaxDD%':>7} {'Ret%':>7}")
+        print("-" * W)
+        rows = [
+            ("Mat+Analista (Fase 4)", fase4_metrics),
+            ("Mat+Analista+Cazador (Fase 5)", results_with_cazador["metrics"]),
+        ]
+        for label, m in rows:
+            print(
+                f"  {label:<28}"
+                f" {m['sharpe_ratio']:>7.3f}"
+                f" {m['max_drawdown_pct']:>7.1f}"
+                f" {m['total_return_pct']:>7.1f}"
+            )
+        print("-" * W)
+        delta = results_with_cazador["metrics"]["sharpe_ratio"] - fase4_metrics["sharpe_ratio"]
+        improves = delta > 0
+        print(
+            f"  {'[OK]' if improves else '[!!]'} Delta Sharpe: {delta:+.3f} "
+            f"({'MEJORA' if improves else 'NO MEJORA'})"
+        )
+        print("=" * W)
+        print()
+    except Exception:
+        pass
 
 
 def _load_phase3_and_compare(results_with_analista: dict, cfg: dict) -> None:
