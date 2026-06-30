@@ -40,6 +40,12 @@ class TestComputePositionSize:
         f_star = gestor.compute_position_size(p=0.6, b=1.0)
         assert abs(f_star - 0.1) < 1e-9, f"Half-Kelly esperaba 0.1, obtenido {f_star}"
 
+    def test_kelly_fraction_override(self, gestor):
+        """Override de rho para Kelly dinámico (Exp5)."""
+        f_base = gestor.compute_position_size(p=0.6, b=1.0)
+        f_boost = gestor.compute_position_size(p=0.6, b=1.0, kelly_fraction=0.6)
+        assert abs(f_boost - f_base * 1.2) < 1e-9
+
     def test_zero_b_returns_zero(self, gestor):
         """b=0 no debe causar ZeroDivisionError."""
         f_star = gestor.compute_position_size(p=0.7, b=0.0)

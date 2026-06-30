@@ -1,0 +1,31 @@
+{
+  "mas": {
+    "total_return_pct": 86.64,
+    "annualized_return_pct": 17.78,
+    "sharpe_ratio": 0.861,
+    "max_drawdown_pct": -29.63,
+    "calmar_ratio": 0.6,
+    "win_rate_pct": 52.34,
+    "n_trading_days": 1005,
+    "sortino_ratio": 0.87,
+    "profit_factor": 1.154
+  },
+  "buy_and_hold": {
+    "total_return_pct": 67.9,
+    "annualized_return_pct": 15.25,
+    "sharpe_ratio": 0.723,
+    "max_drawdown_pct": -31.36,
+    "calmar_ratio": 0.486,
+    "win_rate_pct": 52.44,
+    "n_trading_days": 1003
+  },
+  "sma_crossover": {
+    "total_return_pct": 14.47,
+    "annualized_return_pct": 4.21,
+    "sharpe_ratio": 0.329,
+    "max_drawdown_pct": -22.25,
+    "calmar_ratio": 0.189,
+    "win_rate_pct": 54.08,
+    "n_trading_days": 1004
+  }
+}

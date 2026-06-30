@@ -1,0 +1,21 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Experimento 1 + 2 combinados
+# ──────────────────────────────────────────────────────────────────────────────
+# Exp1 suave (225555) + Exp2 stop-loss holgado.
+#
+# Uso:
+#   python run.py --cazador --conspiranoico --profile profiles/exp1_exp2_combined.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+profile:
+  name: "exp1_exp2_combined"
+  description: "Menos fricción (Exp1 suave) + stop-loss ATR 2.5x (Exp2)"
+
+risk_manager:
+  min_kelly_threshold: 0.01
+  stop_loss_atr_multiplier: 2.5
+
+backtester:
+  min_prob_to_buy: 0.45
+  sell_prob_threshold: 0.45
+  sell_hysteresis_days: 3

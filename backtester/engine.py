@@ -76,6 +76,19 @@ class BacktestEngine:
         self.atr_multiplier: float = config["risk_manager"]["stop_loss_atr_multiplier"]
         self.min_kelly_threshold: float = config["risk_manager"]["min_kelly_threshold"]
         self.max_position_pct: float = config["risk_manager"]["max_position_pct"]
+
+        bt_cfg = config["backtester"]
+        self.min_prob_to_buy: float = float(bt_cfg.get("min_prob_to_buy", 0.0))
+        self.sell_prob_threshold: float = float(bt_cfg.get("sell_prob_threshold", 0.0))
+        self.sell_hysteresis_days: int = int(bt_cfg.get("sell_hysteresis_days", 1))
+
+        profile_cfg = config.get("profile", {})
+        self.rebalancing_days: int = int(
+            bt_cfg.get("rebalancing_days")
+            or profile_cfg.get("rebalancing_days")
+            or 0
+        )
+
         self.log_dir = Path(config["general"]["log_dir"]) / "trades"
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -83,6 +96,8 @@ class BacktestEngine:
         self.positions: dict[str, Position] = {}
         self.equity_curve: list[float] = []
         self.trade_logs: list[TradeLog] = []
+        # Días consecutivos con señal débil por ticker (histéresis de venta)
+        self._weak_signal_streak: dict[str, int] = {}
 
     def reset(self) -> None:
         """Reinicia el estado para una nueva ventana walk-forward."""
@@ -90,6 +105,59 @@ class BacktestEngine:
         self.positions = {}
         self.equity_curve = []
         self.trade_logs = []
+        self._weak_signal_streak = {}
+
+    def _is_weak_signal_day(
+        self,
+        signal: float,
+        f_star: float,
+    ) -> bool:
+        """True si el día cuenta como débil para histéresis de venta."""
+        if self.sell_prob_threshold > 0:
+            return signal < self.sell_prob_threshold
+        return f_star <= 0
+
+    def _should_open_position(
+        self,
+        signal: float,
+        f_star: float,
+        hay_veto: bool,
+        has_position: bool,
+    ) -> bool:
+        if hay_veto or has_position:
+            return False
+        if f_star <= self.min_kelly_threshold:
+            return False
+        if self.min_prob_to_buy > 0 and signal < self.min_prob_to_buy:
+            return False
+        return True
+
+    def _should_close_on_signal(
+        self,
+        ticker: str,
+        signal: float,
+        f_star: float,
+        has_position: bool,
+    ) -> bool:
+        if not has_position:
+            self._weak_signal_streak.pop(ticker, None)
+            return False
+
+        if not self._is_weak_signal_day(signal, f_star):
+            self._weak_signal_streak[ticker] = 0
+            return False
+
+        streak = self._weak_signal_streak.get(ticker, 0) + 1
+        self._weak_signal_streak[ticker] = streak
+        return streak >= self.sell_hysteresis_days
+
+    @staticmethod
+    def _is_rebalance_day(fecha, dates: pd.Index, interval: int) -> bool:
+        """True si es día de rebalanceo (interval<=1 = cada día, modo swing)."""
+        if interval <= 1:
+            return True
+        pos = dates.get_loc(fecha)
+        return int(pos) % interval == 0
 
     def portfolio_value(self, current_prices: dict[str, float]) -> float:
         """Valor total del portfolio (capital en efectivo + posiciones abiertas)."""
@@ -124,6 +192,7 @@ class BacktestEngine:
         Returns:
             (equity_curve, daily_returns): Series indexadas por fecha.
         """
+        self.equity_curve = []
         dates = signals.index
 
         for fecha in dates:
@@ -138,6 +207,7 @@ class BacktestEngine:
                 continue
 
             hay_veto = veto_signal.get(fecha, 0) == 1
+            rebalance_today = self._is_rebalance_day(fecha, dates, self.rebalancing_days)
 
             # Paso 1: verificar stop-loss en posiciones abiertas (antes de nuevas órdenes)
             if atr_data is not None and fecha in atr_data.index:
@@ -148,7 +218,12 @@ class BacktestEngine:
                     if not pd.isna(atr):
                         self._check_stop_loss(fecha, ticker, current_prices[ticker], float(atr))
 
-            # Paso 2: procesar señales del Juez para cada ticker
+            # Paso 2: señales del Juez (solo en días de rebalanceo si long-term)
+            if not rebalance_today:
+                valor = self.portfolio_value(current_prices)
+                self.equity_curve.append(valor)
+                continue
+
             for ticker in kelly_fractions.columns:
                 if ticker not in current_prices:
                     continue
@@ -162,6 +237,12 @@ class BacktestEngine:
                 if pd.isna(f_star):
                     f_star = 0.0
 
+                signal = f_star
+                if fecha in signals.index and ticker in signals.columns:
+                    raw_signal = signals.loc[fecha, ticker]
+                    if not pd.isna(raw_signal):
+                        signal = float(raw_signal)
+
                 votes: dict = {}
                 if (
                     agent_votes_log is not None
@@ -170,10 +251,14 @@ class BacktestEngine:
                 ):
                     votes = agent_votes_log.loc[fecha, ticker] or {}
 
-                if f_star <= 0 and ticker in self.positions:
+                if self._should_close_on_signal(
+                    ticker, signal, f_star, ticker in self.positions,
+                ):
                     self._sell(fecha, ticker, price, f_star=0.0, reason="signal", agent_votes=votes)
 
-                elif f_star > self.min_kelly_threshold and ticker not in self.positions and not hay_veto:
+                elif self._should_open_position(
+                    signal, f_star, hay_veto, ticker in self.positions,
+                ):
                     self._buy(fecha, ticker, price, f_star, current_prices, agent_votes=votes)
 
             valor = self.portfolio_value(current_prices)
@@ -183,16 +268,36 @@ class BacktestEngine:
         daily_returns = equity.pct_change().fillna(0)
         return equity, daily_returns
 
-    def close_all_positions(self, fecha, current_prices: dict[str, float]) -> None:
+    def close_all_positions(self, fecha, current_prices: dict[str, float]) -> dict[str, int | float]:
         """
         Cierra todas las posiciones abiertas al final de un período walk-forward.
 
         Llamar al final de cada ventana de validación antes de hacer reset(),
         para que las posiciones no queden abiertas entre ventanas.
+
+        Returns:
+            Estadísticas del cierre (Exp10): posiciones cerradas, valor previo, comisiones.
         """
+        n_positions = len(self.positions)
+        portfolio_before = self.portfolio_value(current_prices)
+        trades_before = len(self.trade_logs)
+
         for ticker in list(self.positions.keys()):
             price = current_prices.get(ticker, self.positions[ticker].entry_price)
             self._sell(fecha, ticker, price, f_star=0.0, reason="end_of_period")
+
+        closing_commission = sum(
+            log.commission
+            for log in self.trade_logs[trades_before:]
+            if log.action == "SELL"
+        )
+
+        return {
+            "n_positions_closed": n_positions,
+            "portfolio_value_before": round(portfolio_before, 2),
+            "commission_closing": round(closing_commission, 2),
+            "capital_after_close": round(self.capital, 2),
+        }
 
     def _buy(
         self,
@@ -295,14 +400,30 @@ class BacktestEngine:
             )
             self._sell(fecha, ticker, price, f_star=0.0, reason="stop_loss")
 
-    def save_trade_logs(self, filename: str = "trades.jsonl") -> Path:
-        """Guarda el log de operaciones en formato JSONL (una operación por línea)."""
+    def save_trade_logs(
+        self,
+        filename: str = "trades.jsonl",
+        start_index: int = 0,
+        append: bool = False,
+    ) -> Path:
+        """Guarda el log de operaciones en formato JSONL (una operación por línea).
+
+        Args:
+            filename: Nombre del archivo dentro de log_dir.
+            start_index: Índice inicial del slice de trades a guardar.
+            append: Si True, añade al final del archivo (modo paper trading).
+        """
         output_path = self.log_dir / filename
-        with open(output_path, "w", encoding="utf-8") as f:
-            for log in self.trade_logs:
-                f.write(json.dumps(log.__dict__) + "\n")
+        logs_slice = self.trade_logs[start_index:]
+        mode = "a" if append else "w"
+        with open(output_path, mode, encoding="utf-8") as f:
+            for log in logs_slice:
+                record = dict(log.__dict__)
+                if "date" in record:
+                    record["date"] = str(record["date"])[:10]
+                f.write(json.dumps(record) + "\n")
         logger.info(
-            "Log de operaciones guardado: %s (%d operaciones)",
-            output_path, len(self.trade_logs),
+            "Log de operaciones guardado: %s (%d operaciones, mode=%s)",
+            output_path, len(logs_slice), mode,
         )
         return output_path

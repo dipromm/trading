@@ -102,7 +102,15 @@ def compute_sma_ratio(close: pd.Series, fast: int = 20, slow: int = 50) -> pd.Se
 
 # ── Pipeline completo ─────────────────────────────────────────────────────────
 
-def compute_all_features(df: pd.DataFrame) -> pd.DataFrame:
+def feature_windows_from_config(config: dict) -> dict:
+    """Extrae overrides de ventanas de indicadores (perfil long_term, etc.)."""
+    return dict(config.get("matematico", {}).get("features_override") or {})
+
+
+def compute_all_features(
+    df: pd.DataFrame,
+    windows: dict | None = None,
+) -> pd.DataFrame:
     """
     Calcula todas las features técnicas sobre un DataFrame OHLCV.
 
@@ -119,6 +127,21 @@ def compute_all_features(df: pd.DataFrame) -> pd.DataFrame:
         al día T para predecir T+1. El backtester es responsable de garantizar
         que el modelo solo ve features de T para predecir el retorno de T+1.
     """
+    w = windows or {}
+    close_norm_window = int(w.get("close_norm_window", 20))
+    rsi_14_w = int(w.get("rsi_window", 14))
+    rsi_28_w = int(w.get("rsi_window_long", 28))
+    macd_windows = w.get("macd_windows", [12, 26, 9])
+    bb_window = int(w.get("bollinger_window", 20))
+    atr_w = int(w.get("atr_window", 14))
+    vol_window = int(w.get("volume_window", 20))
+    sma_pair = w.get("sma_windows", [20, 50])
+    sma_fast = int(sma_pair[0])
+    sma_slow = int(sma_pair[1]) if len(sma_pair) > 1 else 50
+    sma_long_pair = w.get("sma_long_windows", [50, 200])
+    sma_long_fast = int(sma_long_pair[0])
+    sma_long_slow = int(sma_long_pair[1]) if len(sma_long_pair) > 1 else 200
+
     close = df["Close"]
     high = df["High"]
     low = df["Low"]
@@ -128,35 +151,40 @@ def compute_all_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Precios normalizados
     features["close"] = close
-    features["close_norm"] = close / close.rolling(20).mean()  # Precio vs SMA20
+    features["close_norm"] = close / close.rolling(close_norm_window).mean()
 
     # Retornos históricos (lookback, no futuro)
     features["return_1d"] = compute_returns(close, 1)
     features["return_5d"] = compute_returns(close, 5)
     features["return_20d"] = compute_returns(close, 20)
 
-    # RSI
-    features["rsi_14"] = compute_rsi(close, 14)
-    features["rsi_28"] = compute_rsi(close, 28)
+    # RSI (nombres de columna fijos para el Matemático)
+    features["rsi_14"] = compute_rsi(close, rsi_14_w)
+    features["rsi_28"] = compute_rsi(close, rsi_28_w)
 
     # MACD
-    macd_df = compute_macd(close)
+    macd_fast, macd_slow, macd_signal = (
+        int(macd_windows[0]),
+        int(macd_windows[1]),
+        int(macd_windows[2]) if len(macd_windows) > 2 else 9,
+    )
+    macd_df = compute_macd(close, fast=macd_fast, slow=macd_slow, signal=macd_signal)
     features = pd.concat([features, macd_df], axis=1)
 
     # Bollinger Bands
-    bb_df = compute_bollinger_bands(close)
+    bb_df = compute_bollinger_bands(close, window=bb_window)
     features = pd.concat([features, bb_df], axis=1)
 
     # ATR (volatilidad)
-    features["atr"] = compute_atr(high, low, close)
-    features["atr_pct"] = features["atr"] / close  # ATR normalizado por precio
+    features["atr"] = compute_atr(high, low, close, window=atr_w)
+    features["atr_pct"] = features["atr"] / close
 
     # Volumen
-    features["volume_ratio"] = compute_volume_ratio(volume)
+    features["volume_ratio"] = compute_volume_ratio(volume, window=vol_window)
 
-    # SMA ratios (tendencia)
-    features["sma_20_50_ratio"] = compute_sma_ratio(close, 20, 50)
-    features["sma_50_200_ratio"] = compute_sma_ratio(close, 50, 200)
+    # SMA ratios (tendencia) — nombres fijos, ventanas configurables
+    features["sma_20_50_ratio"] = compute_sma_ratio(close, sma_fast, sma_slow)
+    features["sma_50_200_ratio"] = compute_sma_ratio(close, sma_long_fast, sma_long_slow)
 
     # Target: retorno del día SIGUIENTE (shift(-1) = mirar un día hacia adelante)
     # ATENCIÓN: este campo solo se usa para entrenar, nunca como feature de entrada.

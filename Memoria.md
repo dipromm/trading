@@ -18,7 +18,7 @@
 9. [Tests Implementados](#9-tests-implementados)
 10. [Estructura del Repositorio](#10-estructura-del-repositorio)
 11. [Expansión v2: Perfiles de Trading y El Explorador](#11-expansión-v2-perfiles-de-trading-y-el-explorador)
-12. [Trampas Técnicas y Cómo Se Evitan](#12-trampas-técnicas-y-cómo-se-evitan) *(12 entradas)*
+12. [Trampas Técnicas y Cómo Se Evitan](#12-trampas-técnicas-y-cómo-se-evitan) *(13 entradas)*
 13. [Sesgos Conocidos y Limitaciones](#13-sesgos-conocidos-y-limitaciones)
 14. [Stack Tecnológico](#14-stack-tecnológico)
 15. [Hoja de Ruta](#15-hoja-de-ruta)
@@ -520,7 +520,7 @@ Proceso por cada día T:
 **Razones de venta registradas:**
 - `"signal"` — el Juez / Kelly indica cerrar posición
 - `"stop_loss"` — precio cayó más de N × ATR desde la entrada
-- `"end_of_period"` — fin de ventana walk-forward, se cierra todo
+- `"end_of_period"` — fin de ventana walk-forward en **modo legacy** (sin carry); desactivado por defecto desde Exp10 (ver §6.20)
 
 ### 6.8 `backtester/walk_forward.py` — Validación Walk-Forward
 
@@ -546,7 +546,8 @@ Proceso por cada día T:
 
 **Resultado final:**
 - Retornos de todas las ventanas concatenados en cronológico
-- `full_equity = (1 + full_returns).cumprod() × initial_capital`
+- **Modo default (post-Exp10, jun 2026):** `carry_positions_between_windows: true` — la curva equity se concatena directamente (cuenta continua)
+- **Modo legacy:** sin carry, cada ventana hace `close_all_positions` + `reset()` y `full_equity = (1 + full_returns).cumprod() × initial_capital` (ver §6.20)
 - `metrics.summary()` sobre el período completo out-of-sample
 
 ### 6.9 `baselines/buy_and_hold.py` — Baseline Buy & Hold
@@ -798,21 +799,24 @@ Ver sección 6.17 para la documentación detallada.
 
 ### 7.3 `agents/conspiranoico.py` — El Conspiranoico (Fase 6)
 
-**Estado:** Stub con estructura definida.
+**Estado:** ✅ Completamente implementado (Junio 2026). Ver sección 6.17.
 
 **Diseño:**
-- Isolation Forest para detección de anomalías de régimen
+- `data/regime.py`: módulo de features de régimen (fuera del agente para facilitar testing)
+- Isolation Forest para detección de anomalías de régimen + StandardScaler ajustado en train
 - Features de régimen (todas calculables con datos diarios de yfinance):
-  - Volatilidad realizada rolling (std de retornos a 5, 20 y 60 días)
-  - VIX descargado como ticker `^VIX`
-  - Correlación rolling entre acciones del universo (alta correlación = movimiento en manada = pánico)
-  - Volumen relativo vs media de 20 días
-  - Amplitud del mercado: % de acciones del universo que suben ese día
-- Output: señal de veto binaria (1 = régimen anómalo, no operar)
+  - Volatilidad realizada rolling (std de retornos a 5, 20 y 60 días, media del universo equity)
+  - VIX descargado como ticker `^VIX` (caché en `data/cache/vix_index.parquet`)
+  - Correlación rolling entre acciones equity del universo (alta correlación = pánico)
+  - Volumen relativo vs media de 20 días (media del universo equity)
+  - Amplitud del mercado: % de acciones equity del universo que suben ese día
+- Output: señal de veto binaria por fecha (1 = régimen anómalo, no operar)
+- Umbral de veto: percentil 5 de anomaly scores del período de entrenamiento (`veto_threshold_percentile: 5` en config)
 
-**Validación crítica:** comprobar que el veto se activa en períodos de crisis documentados:
-- Marzo 2020 (crash COVID)
-- 2022 (caídas por subida de tipos)
+**Wiring en el pipeline:**
+- `walk_forward.py`: Conspiranoico se entrena/predice por ventana (anti-leakage); veto reemplaza el hardcoded `veto=0`
+- `run.py`: flag `--conspiranoico`; precomputa VIX + regime_features una vez antes del walk-forward
+- `agent_votes_log`: incluye `"conspiranoico": 0/1` por fecha en los JSONL de trades
 
 **Nota de nomenclatura:** el agente se llamaba originalmente "El Esquizofrénico" pero se renombró a "El Conspiranoico" por ser más presentable para el portfolio. El cambio también incluyó actualizar las features para eliminar las que requieren datos intraday (bid-ask spread no disponible con datos diarios de yfinance).
 
@@ -1375,6 +1379,16 @@ features["target_binary"] = np.where(
 
 **Implicación para el backtest:** tickers con poca cobertura de noticias se comportan como si solo tuvieran el Matemático. El Analista añade valor solo donde tiene datos suficientes.
 
+### 12.13 Reset anual de cartera en walk-forward — el error del carry (Exp10)
+
+**El problema:** hasta junio 2026, al cerrar cada ventana OOS el motor liquidaba todas las posiciones (`reason="end_of_period"`), reseteaba el capital a `initial_capital` y encadenaba retornos con `cumprod` como si cada año fuera una cuenta nueva de 10.000 €.
+
+**Consecuencia:** comparación **injusta vs Buy & Hold** (que nunca liquida ni resetea), comisiones de cierre infladas, y subestimación del retorno total del MAS — especialmente en configs con poca rotación (Exp1). Ver análisis completo en **§6.20**.
+
+**Corrección:** `backtester.carry_positions_between_windows: true` (default). Con carry activo, no llamar `reset()` ni `close_all_positions()` entre ventanas; concatenar la curva de equity real.
+
+**Regla:** al evaluar estrategia activa vs pasiva, la simulación de cartera debe modelar **una cuenta continua**, no N cuentas independientes reseteadas cada 31-dic.
+
 ---
 
 ## 13. Sesgos Conocidos y Limitaciones
@@ -1681,5 +1695,227 @@ Referencia: `experiments/fase4_mat_analista_20260619_004415/` (Sharpe 0.612, ret
 
 **Decisión:** Fase 5 cerrada. Continuar con Fase 6 — El Conspiranoico (Isolation Forest para detección de régimen), usando Run A (Mat + Cazador) como baseline. El Conspiranoico es prioritario para mitigar el problema de 2022.
 
+---
 
+### 6.17 Fase 6 — El Conspiranoico (Junio 2026)
+
+**Objetivo:** implementar el agente de detección de régimen de mercado anómalo (Isolation Forest) y validar si el veto reduce las pérdidas en períodos de crisis, especialmente 2022.
+
+**Implementación:**
+- `data/regime.py`: nuevo módulo con features de régimen de mercado:
+  - Volatilidad realizada rolling (std de retornos, ventanas 5/20/60d, media del universo equity)
+  - VIX descargado como `^VIX` con caché Parquet en `data/cache/vix_index.parquet`
+  - Correlación media pairwise rolling (ventana 20d, solo tickers equity)
+  - Volumen relativo medio (vol/MA20, universo equity)
+  - Amplitud de mercado: % acciones equity al alza ese día
+- `agents/conspiranoico.py`: implementación completa con StandardScaler (ajustado solo en train, anti-leakage) + IsolationForest + umbral en percentil 5 de anomaly scores de train
+- `backtester/walk_forward.py`: veto real reemplaza el hardcoded `veto=0`; conspiranoico se entrena/predice por ventana; voto incluido en `agent_votes_log`
+- `run.py`: flag `--conspiranoico`, precompute VIX + regime_features, comparativa vs Fase 5
+- `scripts/diagnose_conspiranoico.py`: script de diagnóstico visual (sanity check en crisis documentadas)
+- Tests: `tests/test_regime.py` (15 tests) y `tests/test_conspiranoico.py` (13 tests), todos pasan
+
+**Diseño del umbral de veto:**
+- `contamination=0.05` guía el Isolation Forest (espera ~5% de anomalías en la distribución de entrenamiento)
+- `veto_threshold_percentile=5` en `config.yaml`: el umbral de veto se fija en el percentil 5 de los anomaly scores del período de entrenamiento. Los días de validación con score por debajo de ese umbral reciben veto=1
+- Días con NaN en features de régimen reciben veto=0 (conservador: no vetar sin información)
+
+**Resultados OOS (Junio 2026):**
+
+`python run.py --cazador --conspiranoico` vs baseline `python run.py --cazador`
+
+| Ventana | Sharpe Fase 5 | Sharpe Fase 6 | Delta |
+|---------|---------------|---------------|-------|
+| 2021 | 1.493 | 1.493 | 0.000 |
+| 2022 | -0.758 | **-0.717** | **+0.041** |
+| 2023 | 2.101 | 2.109 | +0.008 |
+| 2024 | 0.813 | 0.822 | +0.009 |
+| **TOTAL OOS** | **0.638** | **0.663** | **+0.025** |
+
+| Métrica | Fase 5 (Run A) | Fase 6 | Delta |
+|---------|---------------|--------|-------|
+| Sharpe OOS | 0.638 | **0.663** | +0.025 |
+| Max Drawdown | -27.89% | **-27.6%** | +0.3 pp |
+| Retorno total | +49.4% | **+51.9%** | +2.5 pp |
+
+**Criterios de éxito:**
+- Sharpe OOS no empeora > 0.05: **[OK]** (+0.025, mejora)
+- MaxDD mejora: **[OK]** (+0.3 pp menos negativo)
+- Iter 2 (2022) Sharpe mejora sobre -0.758: **[OK]** (-0.717, +0.041)
+- Todos los tests pasan (326 tests): **[OK]**
+
+**Análisis de resultados:**
+
+1. **El Conspiranoico añade valor, aunque modestamente:** Sharpe OOS +0.025, MaxDD +0.3 pp. La mejora principal es en 2022 (+0.041 de Sharpe), exactamente donde se esperaba — el veto bloquea algunas compras en el mercado bajista de 2022. El impacto en 2021 y 2023 es neutral (no degrada el alpha en bull markets).
+
+2. **El veto en 2022 funciona parcialmente:** la iteración 2022 mejora de -0.758 a -0.717, pero sigue siendo negativa. El Isolation Forest entrenado en 2018-2021 detecta algunos regímenes anómalos de 2022 (subida de tipos) pero no todos. El mercado bajista estructural de 2022 es difícil de predecir con features puramente cuantitativas: el VIX era moderado al inicio del año (crisis gradual, no crash abrupto como marzo 2020).
+
+3. **Correlación y breadth son las features más informativas:** en 2022, la correlación alta entre activos (movimiento en manada bajista) y la amplitud baja (pocas acciones subiendo) capturan el régimen anómalo mejor que la volatilidad pura.
+
+4. **El sistema no vetar demasiado:** los días de veto en cada ventana están controlados (el percentil 5 de train garantiza no más del 5-10% de días con veto en validación).
+
+5. **2022 sigue siendo el punto débil del sistema:** -19.8% OOS en 2022 es la mayor limitación. Un modelo de régimen más sofisticado (HMM, o features adicionales como spreads de crédito) podría mejorar esto en una iteración futura.
+
+**Nota sobre el diagnóstico:**
+El script `scripts/diagnose_conspiranoico.py` permite visualizar el timeline de veto vs VIX y verificar que el Conspiranoico se activa en períodos de crisis. Ejecutar con:
+```bash
+python scripts/diagnose_conspiranoico.py
+python scripts/diagnose_conspiranoico.py --output reports/veto_analysis.csv
+```
+
+**Criterio de activación Juez v2 RL:**
+Los criterios se cumplen (MaxDD mejora, Sharpe iter 2 mejora sin degradar Sharpe total > 0.02). Sin embargo, dado que las mejoras son modestas (+0.025 Sharpe) y el sistema todavía pierde en 2022, la prioridad es entender si el Conspiranoico puede mejorarse antes de añadir la complejidad de RL. **Decisión: posponer Juez v2 RL** — documentar el gate y continuar con Fase 7 (Dashboard) o mejoras del Conspiranoico (HMM, umbral dinámico).
+
+**Config recomendada tras Fase 6:** `python run.py --cazador --conspiranoico` (Sharpe 0.663, MaxDD -27.6%, Return +51.9%). **Supersedida por §6.20** tras experimentos Exp1–Exp10 y fix de carry.
+
+**Próximo paso:** Fase 7 — Dashboard Streamlit, o mejora del Conspiranoico con HMM / features adicionales si el problema de 2022 sigue siendo inaceptable.
+
+---
+
+### 6.20 Fase 6 — Experimentos Exp1–Exp10 y corrección Carry (Junio 2026)
+
+**Contexto:** Tras cerrar Fase 6 con Conspiranoico binario (Sharpe 0.663 OOS), se ejecutó una batería de 10 experimentos priorizados sobre el stack Mat + Cazador + Conspiranoico, comparando siempre contra B&H OOS (2021–2024): Sharpe **0.723**, Return **+67.9%**, MaxDD **-31.4%**.
+
+**Referencia de barrido completo (carry activo):** `reports/experiment_grid_carry.json` (generado por `scripts/run_experiment_grid_carry.py`, 19 runs, 2026-06-20).
+
+---
+
+#### El gran error: no hacer carry de posiciones entre ventanas walk-forward
+
+**Qué pasaba (comportamiento legacy hasta Exp10):**
+
+Al final de cada año de validación OOS, el backtester:
+1. Llamaba a `BacktestEngine.close_all_positions()` — liquidaba todo con motivo `end_of_period` y comisiones extra.
+2. Llamaba a `engine.reset()` — volvía a **10.000 €** en cash al inicio de la siguiente ventana.
+3. Encadenaba retornos con `cumprod × initial_capital`, como si cada año fuera una cartera independiente de 10k.
+
+**Por qué era un error metodológico (no un fallo de ML):**
+
+- **Buy & Hold nunca resetea** el 31-dic ni paga comisiones de liquidación forzada.
+- La comparación “MAS vs B&H” estaba **sesgada contra el activo**: el sistema parecía ~15–20 pp por debajo en retorno y casi empataba en Sharpe cuando en realidad parte del gap era **fricción artificial**.
+- Los experimentos Exp1–Exp9 **sí eran comparables entre sí** (misma regla de cierre), pero el **número agregado OOS vs B&H** era demasiado pesimista.
+- El walk-forward de **modelos** (train/predict por ventana, anti-leakage) estaba bien; lo mal simulado era la **cuenta de inversión** entre ventanas.
+
+**Corrección (Exp10):**
+
+- `backtester.carry_positions_between_windows: true` en `config.yaml` (default desde jun 2026).
+- Sin `reset()` ni `close_all_positions()` entre iteraciones; la equity se concatena (`pd.concat(all_equity)`).
+- `close_all_positions()` devuelve estadísticas (`window_close_stats`) cuando el modo legacy está activo, para medir coste de cierre.
+- Perfiles: `profiles/exp10_carry_positions.yaml`, `profiles/exp1_exp3_exp8_exp10_combined.yaml`.
+
+**Lección:** Separar siempre “validación de modelos por ventana” de “simulación de cartera continua”. Para comparar con B&H y con trading real, la cartera debe ser **una sola cuenta** que atraviesa 2021→2024.
+
+---
+
+#### Resumen de experimentos implementados
+
+| Exp | Idea | Implementación | Veredicto (con carry) |
+|-----|------|----------------|----------------------|
+| **Exp1** | Menos fricción: `min_kelly` 0.01, `min_prob_buy` 0.45, histéresis venta 3d | `profiles/exp1_menos_friccion.yaml`, `engine.py` | **Mejor perfil global** (Sharpe 0.907) |
+| **Exp2** | Stop-loss ATR 2.5× en equity | `profiles/exp2_stop_loss_holgado.yaml` | Solo marginal; combinado con Exp1 no mejora vs Exp1 solo |
+| **Exp3** | Veto suave Conspiranoico (Kelly ×0.25/×0.6/×1.0) | `agents/conspiranoico.py`, `walk_forward.py` | Ayuda vs baseline; con Exp1+carry el valor incremental es menor |
+| **Exp4** | Cazador como modulador de riesgo (fuera del Juez) | `cazador.mode: risk_modulator` | Empeora |
+| **Exp5** | Kelly 0.6 si VIX bajo y régimen normal | `kelly_boost` en `regime.py` | Empeora o marginal |
+| **Exp6** | Juez pass-through (solo Matemático) | `judge_v1.mode: pass_through` | Empeora (meta-modelo sí aporta) |
+| **Exp7** | Rotación defensiva TLT/IEF/GLD en crisis | `defensive_rotation` en `walk_forward.py` | Empeora |
+| **Exp8** | Umbral Conspiranoico p7 por tasa WF (no Sharpe 2022) | `scripts/diagnose_veto_walkforward.py` | Afinación útil en combo; **aislado** no basta (~0.60 Sharpe) |
+| **Exp9** | Juez pass-through sobre stack Exp1+Exp3+Exp8 | `profiles/exp9_juez_passthrough.yaml` | Empeora vs meta-modelo |
+| **Exp10** | Carry posiciones entre ventanas WF | `carry_positions_between_windows` | **Fix estructural** — ver apartado anterior |
+
+---
+
+#### Ranking OOS con carry (ordenado por Sharpe)
+
+Barrido 2026-06-20. B&H referencia: Sharpe **0.723**, Return **+67.9%**, MaxDD **-31.4%**.
+
+| # | Perfil | Sharpe | Return | MaxDD | Δ Sharpe vs B&H | 2022 (ret%) |
+|---|--------|--------|--------|-------|-----------------|-------------|
+| 1 | **Exp1** (menos fricción) | **0.907** | **+89.4%** | -28.1% | **+0.184** | -20.2% |
+| 2 | Exp1+Exp2 (stop holgado) | 0.872 | +87.9% | -28.2% | +0.149 | -20.5% |
+| 3 | Exp1+Exp3+Exp8 (p7) | 0.861 | +77.0% | -28.1% | +0.138 | -19.4% |
+| 4 | Exp1+Exp3 | 0.818 | +71.0% | -28.0% | +0.095 | -19.3% |
+| 5 | Exp1+Exp3+Exp8 (p3) | 0.815 | +70.9% | -28.1% | +0.092 | -19.4% |
+| 6 | Exp1+Exp3+Exp7 | 0.813 | +70.5% | -28.3% | +0.090 | -19.6% |
+| 7 | Exp1+Exp3+Exp5 | 0.752 | +59.8% | -27.7% | +0.029 | -19.1% |
+| 8 | Exp1+Exp3+Exp4 / Exp6 | 0.671 | +50.7% | -28.4% | -0.052 | ~-20% |
+| 9 | Exp2 (stop holgado solo) | 0.635 | +49.1% | -27.2% | -0.088 | -18.9% |
+| 10 | Exp1+Exp3+Exp9 (pass-through) | 0.631 | +46.5% | -28.9% | -0.092 | -20.8% |
+| 11 | Baseline (config base, veto binario) | 0.583 | +45.2% | -28.1% | -0.140 | -19.7% |
+| 12 | Exp3 (veto suave solo) | 0.586 | +41.6% | -26.5% | -0.137 | -18.6% |
+| 13 | Exp8 (p7 solo) | 0.602 | +42.2% | -26.2% | -0.121 | -18.6% |
+| 14 | Exp5 (más exposición) | 0.593 | +45.5% | -28.0% | -0.130 | -19.7% |
+| 15 | Exp4 / Exp6 / Exp7 solos | 0.49–0.50 | +30% | ~-27% | -0.22 | ~-18/22% |
+
+**Nota:** Exp1+Exp3+Exp8+Exp10 es idéntico a Exp1+Exp3+Exp8 porque carry ya es el default.
+
+**Runs de referencia (carry):** `experiments/fase6_mat_cazador_conspiranoico_exp1_menos_friccion_20260620_045439/` (Exp1), `experiments/fase6_mat_cazador_conspiranoico_exp1_exp3_exp8_combined_20260620_050714/` (stack completo).
+
+---
+
+#### Antes vs después del fix de carry (configs clave)
+
+| Perfil | Sin carry (antes) | Con carry (después) | Δ Return |
+|--------|-------------------|---------------------|----------|
+| Baseline Fase 6 | 0.663 / +51.9% | 0.583 / +45.2% | -6.7 pp |
+| Exp1 solo | 0.665 / +54.2% | **0.907 / +89.4%** | **+35 pp** |
+| Exp1+Exp3 | 0.713 / +54.8% | 0.818 / +71.0% | +16 pp |
+| Exp1+Exp3+Exp8 | 0.719 / +54.6% | 0.861 / +77.0% | +22 pp |
+
+**Interpretación del cuadro:**
+- El fix de carry **revela** el verdadero potencial del stack con reglas de ejecución Exp1; el salto de +35 pp en Exp1 solo es el más dramático.
+- El baseline sin Exp1 **empeora** con carry (veto binario + posiciones arrastradas) — confirma que carry no es una panacea sin buenas reglas de ejecución.
+- Las conclusiones **relativas** de Exp3–Exp9 (qué ayuda / qué empeora) se mantienen; cambia la escala absoluta y la comparación con B&H.
+
+---
+
+#### Conclusiones consolidadas
+
+1. **El MAS supera B&H** en el stack adecuado con carry: Exp1 alcanza Sharpe **0.907** y Return **+89.4%** vs B&H **0.723** / **+67.9%**. MaxDD sigue mejor que B&H (~-28% vs -31.4%).
+
+2. **Exp1 (menos fricción) es la palanca dominante** — más que Exp3, Exp8 o más agentes. Reducir rotación y comisiones acerca el activo al pasivo sin renunciar a la gestión de riesgo.
+
+3. **Exp1+Exp3+Exp8** es el stack “completo” razonable si se quiere Conspiranoico afinado (p7): Sharpe **0.861**, Return **+77.0%**. Exp3+Exp8 aportan menos de lo que parecía antes del carry; **Exp1 solo gana** al stack combinado.
+
+4. **No añadir complejidad que empeora:** Exp4 (Cazador modulador), Exp6/Exp9 (Juez pass-through), Exp7 (rotación defensiva). El meta-modelo logistic Mat+Cazador funciona.
+
+5. **Exp8 aislado** (`exp8_veto_tuned`): Sharpe ~0.60, Return +42% — válido como **afinación** del umbral WF (p7 > p5), no como estrategia standalone. Las tasas de veto por ventana cumplen criterio Exp8 (<10% en años buenos, ~39% en 2022).
+
+6. **2022 sigue siendo el año débil** (~-18% a -21% en todos los perfiles). Carry mejora el total al capitalizar mejor 2021/2023/2024 (Iter 4 pasa de ~+10% a ~+31% con Exp1+Exp3+Exp8), no porque 2022 deje de perder.
+
+7. **Analista (Fase 4):** históricamente ayudó solo con Matemático; en stack Fase 6 completo **empeoró** (0.644 vs 0.663 sin Analista, sin carry). Re-test con carry es posible pero poco probable que supere Exp1 solo.
+
+8. **Métrica de éxito realista:** el producto compite en **Sharpe / Calmar / MaxDD**, no solo en igualar retorno B&H. Con carry + Exp1, también se supera B&H en retorno total OOS.
+
+---
+
+#### Artefactos y comandos
+
+```bash
+# Mejor perfil (recomendado)
+python run.py --cazador --conspiranoico --profile profiles/exp1_menos_friccion.yaml
+
+# Stack completo Exp1+Exp3+Exp8
+python run.py --cazador --conspiranoico --profile profiles/exp1_exp3_exp8_combined.yaml
+
+# Diagnóstico veto WF (Exp8)
+python scripts/diagnose_veto_walkforward.py --profile profiles/exp1_exp3_combined.yaml --sweep 3,5,7,10,12
+
+# Barrido completo con carry
+python scripts/run_experiment_grid_carry.py
+```
+
+**Perfiles:** `profiles/exp1_menos_friccion.yaml` … `profiles/exp1_exp3_exp8_exp10_combined.yaml` (ver carpeta `profiles/`).
+
+---
+
+#### Config recomendada actualizada (jun 2026)
+
+| Objetivo | Perfil | Comando |
+|----------|--------|---------|
+| **Máximo rendimiento OOS** | `exp1_menos_friccion` | `python run.py --cazador --conspiranoico --profile profiles/exp1_menos_friccion.yaml` |
+| Stack con Conspiranoico afinado | `exp1_exp3_exp8_combined` | `python run.py --cazador --conspiranoico --profile profiles/exp1_exp3_exp8_combined.yaml` |
+| Referencia tuning veto | `exp8_veto_tuned` | Solo diagnóstico; no desplegar solo |
+
+**Default `config.yaml`:** `carry_positions_between_windows: true`, `conspiranoico.veto_mode: "binary"` (los perfiles Exp3/Exp8 sobreescriben a soft + p7).
+
+**Próximo paso sugerido:** validar holdout 2025 (reservado en config), probar Exp1+Analista con carry si hay caché de noticias, o Fase 7 Dashboard.
 

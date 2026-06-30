@@ -1,0 +1,23 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Experimento 11: Conspiranoico con HMM
+# ──────────────────────────────────────────────────────────────────────────────
+# Reemplaza Isolation Forest por Gaussian HMM (3 estados: normal/estrés/crisis).
+# Estados ordenados por VIX + vol_20d en train; escala Kelly por estado.
+#
+# Uso:
+#   python run.py --cazador --conspiranoico --profile profiles/exp11_conspiranoico_hmm.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+profile:
+  name: "exp11_conspiranoico_hmm"
+  description: "Conspiranoico HMM: régimen latente en lugar de anomaly score IF"
+
+conspiranoico:
+  detector: "hmm"
+  veto_mode: "soft"
+  soft_veto_scale_severe: 0.25
+  soft_veto_scale_moderate: 0.6
+  hmm:
+    n_states: 3
+    n_iter: 100
+    covariance_type: "diag"

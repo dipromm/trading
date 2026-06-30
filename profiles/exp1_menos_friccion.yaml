@@ -1,0 +1,25 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Experimento 1: Menos fricción
+# ──────────────────────────────────────────────────────────────────────────────
+# Objetivo: reducir rotación y comisiones sin tocar agentes ni el Juez.
+#
+# Cambios (versión suave, validada 20260619_225555):
+#   - min_kelly_threshold: 1.0% (base 0.5%)
+#   - min_prob_to_buy: 0.45
+#   - Vender tras 3 días consecutivos con prob < 0.45
+#
+# Uso:
+#   python run.py --cazador --conspiranoico --profile profiles/exp1_menos_friccion.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+profile:
+  name: "exp1_menos_friccion"
+  description: "Menos fricción: umbral Kelly + filtro entrada + histéresis ventas"
+
+risk_manager:
+  min_kelly_threshold: 0.01
+
+backtester:
+  min_prob_to_buy: 0.45
+  sell_prob_threshold: 0.45
+  sell_hysteresis_days: 3

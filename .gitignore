@@ -31,6 +31,12 @@ data/processed/
 # ── Logs y experimentos ───────────────────────────────────────────────────────
 logs/trades/*.json
 logs/trades/*.jsonl
+logs/paper_trading/
+logs/errors/
+logs/positions_current.json
+
+# ── Dashboard artefactos generados ───────────────────────────────────────────
+dashboard/api/static/*.png
 
 # ── Jupyter ───────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/

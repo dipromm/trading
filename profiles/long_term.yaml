@@ -19,20 +19,23 @@ data:
 # Override de features para usar ventanas más largas
 matematico:
   features_override:
-    sma_windows: [50, 200]        # SMAs de largo plazo en vez de 10/30
-    rsi_window: 28                # RSI de 4 semanas en vez de 14 días
-    macd_windows: [26, 52, 9]     # MACD semanal aprox
+    sma_windows: [50, 200]        # sma_50_200_ratio con ventanas largas
+    sma_long_windows: [50, 200]
+    rsi_window: 28                # rsi_14 usa ventana larga
+    rsi_window_long: 28
+    macd_windows: [26, 52, 9]       # MACD semanal aprox
     bollinger_window: 40
     atr_window: 28
 
 backtester:
   # Mismas comisiones, pero se aplican muchas menos veces al mes
   commission_pct: 0.0010
+  rebalancing_days: 21            # Solo evaluar señales cada ~21 días hábiles
 
 risk_manager:
   kelly_fraction: 0.5             # Half-Kelly igual que Swing
   max_position_pct: 0.20          # Concentración mayor permitida: horizonte más largo
-  stop_loss_atr_mult: 5.0         # Stop-loss más holgado para aguantar volatilidad
+  stop_loss_atr_multiplier: 5.0   # Stop-loss más holgado para aguantar volatilidad
 
 # Uso:
 #   python run.py --profile profiles/long_term.yaml

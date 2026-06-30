@@ -1,0 +1,21 @@
+{
+  "mas": {
+    "total_return_pct": 26.78,
+    "annualized_return_pct": 27.28,
+    "sharpe_ratio": 1.148,
+    "max_drawdown_pct": -20.77,
+    "calmar_ratio": 1.313,
+    "win_rate_pct": 60.24,
+    "n_trading_days": 249
+  },
+  "buy_and_hold": {
+    "total_return_pct": 23.93,
+    "annualized_return_pct": 23.69,
+    "sharpe_ratio": 1.213,
+    "max_drawdown_pct": -18.26,
+    "calmar_ratio": 1.297,
+    "win_rate_pct": 57.26,
+    "n_trading_days": 248
+  },
+  "sma_crossover": {}
+}

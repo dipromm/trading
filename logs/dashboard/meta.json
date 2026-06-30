@@ -1,0 +1,11 @@
+{
+  "experiment": "fase6_mat_cazador_conspiranoico_exp1_menos_friccion",
+  "mas_label": "MAS (Mat+Cazador+Conspiranoico) [exp1_menos_friccion]",
+  "saved_at": "2026-06-22T03:52:59",
+  "n_trading_days": 1005,
+  "profile_path": "profiles/exp1_menos_friccion.yaml",
+  "agents": [
+    "cazador",
+    "conspiranoico"
+  ]
+}

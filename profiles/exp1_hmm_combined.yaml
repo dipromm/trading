@@ -1,0 +1,29 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Experimento 1 + HMM (sin Exp3 soft)
+# ──────────────────────────────────────────────────────────────────────────────
+# Exp1 menos fricción + Conspiranoico HMM en lugar de Isolation Forest.
+# veto_mode=binary (como el baseline Exp1); solo estado crisis activa veto.
+#
+# Uso:
+#   python run.py --cazador --conspiranoico --profile profiles/exp1_hmm_combined.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+profile:
+  name: "exp1_hmm_combined"
+  description: "Exp1 menos fricción + Conspiranoico HMM (binary, sin Exp3 soft)"
+
+risk_manager:
+  min_kelly_threshold: 0.01
+
+backtester:
+  min_prob_to_buy: 0.45
+  sell_prob_threshold: 0.45
+  sell_hysteresis_days: 3
+
+conspiranoico:
+  detector: "hmm"
+  veto_mode: "binary"
+  hmm:
+    n_states: 3
+    n_iter: 100
+    covariance_type: "diag"

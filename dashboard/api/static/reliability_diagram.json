@@ -1,0 +1,55 @@
+{
+  "calibration_curve": [
+    {
+      "mean_predicted": 0.5372658823529413,
+      "fraction_of_positives": 0.2823529411764706,
+      "n_samples": 85
+    }
+  ],
+  "perfect_calibration": [
+    {
+      "mean_predicted": 0.0,
+      "fraction_of_positives": 0.0
+    },
+    {
+      "mean_predicted": 0.1,
+      "fraction_of_positives": 0.1
+    },
+    {
+      "mean_predicted": 0.2,
+      "fraction_of_positives": 0.2
+    },
+    {
+      "mean_predicted": 0.3,
+      "fraction_of_positives": 0.3
+    },
+    {
+      "mean_predicted": 0.4,
+      "fraction_of_positives": 0.4
+    },
+    {
+      "mean_predicted": 0.5,
+      "fraction_of_positives": 0.5
+    },
+    {
+      "mean_predicted": 0.6,
+      "fraction_of_positives": 0.6
+    },
+    {
+      "mean_predicted": 0.7,
+      "fraction_of_positives": 0.7
+    },
+    {
+      "mean_predicted": 0.8,
+      "fraction_of_positives": 0.8
+    },
+    {
+      "mean_predicted": 0.9,
+      "fraction_of_positives": 0.9
+    },
+    {
+      "mean_predicted": 1.0,
+      "fraction_of_positives": 1.0
+    }
+  ]
+}

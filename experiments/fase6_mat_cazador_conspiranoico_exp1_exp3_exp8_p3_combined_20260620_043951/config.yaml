@@ -1,0 +1,130 @@
+universe:
+  tickers_file: "data/universe_2018-01-01.csv"
+  max_tickers: 46   # 40 acciones Nasdaq + 6 ETFs de diversificación
+
+data:
+  start_date: "2018-01-01"
+  end_date: "2025-12-31"
+  holdout_start: "2025-01-01"   # Período reservado — NO tocar hasta que el sistema esté finalizado
+  cache_dir: "data/cache"
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+
+backtester:
+  commission_pct: 0.0008          # 0.08% por operación (ida). Aproximación IBKR/Degiro.
+  initial_capital: 10000.0        # Capital simulado en €
+  walk_forward_train_years: 3     # Años de entrenamiento por ventana
+  walk_forward_val_years: 1       # Años de validación por ventana
+  # Reglas de ejecución (defaults = comportamiento original)
+  min_prob_to_buy: 0.0            # Prob mínima del Juez para abrir (0 = desactivado)
+  sell_prob_threshold: 0.0        # Prob por debajo de la cual cuenta día "débil" (0 = usa f*<=0)
+  sell_hysteresis_days: 1         # Días débiles consecutivos antes de vender por señal
+
+risk_manager:
+  kelly_fraction: 0.5             # rho: Half-Kelly (0.5 = más conservador que Kelly puro)
+  max_position_pct: 0.15          # Cap por defecto por ticker (se sobreescribe por asset_classes)
+  stop_loss_atr_multiplier: 2.0   # Stop-loss dinámico: salir si pérdida > N × ATR
+  min_kelly_threshold: 0.005      # Ignorar posiciones menores al 0.5% (ruido)
+  kelly_boost:
+    enabled: false                 # Exp5: subir exposición en régimen normal
+    fraction: 0.6                  # Kelly cuando VIX bajo y Conspiranoico normal (base: 0.5)
+    vix_percentile: 70             # Umbral VIX fijado en percentil de train (anti-leakage)
+    require_normal_regime: true    # Requiere risk_scale=1.0 y sin veto binario
+
+# Caps de posición y de portfolio por clase de activo.
+# max_position_pct: límite por ticker individual de esa clase.
+# max_portfolio_pct: límite total de esa clase sobre el capital total.
+asset_classes:
+  equity:
+    max_position_pct: 0.15        # Max 15% por acción individual
+    max_portfolio_pct: 0.80       # Max 80% del portfolio en renta variable total
+  bond:
+    max_position_pct: 0.20        # Bonos son menos volátiles → posición algo mayor
+    max_portfolio_pct: 0.30       # Max 30% en bonos (TLT + IEF combinados)
+  gold:
+    max_position_pct: 0.10        # Posición moderada en oro
+    max_portfolio_pct: 0.10       # Max 10% en oro total
+  defensive_equity:
+    max_position_pct: 0.15        # ETFs defensivos (XLU, XLP)
+    max_portfolio_pct: 0.20       # Max 20% en sectores defensivos combinados
+  international_equity:
+    max_position_pct: 0.10        # ETF internacional (EFA)
+    max_portfolio_pct: 0.10       # Max 10% en exposición internacional
+
+matematico:
+  n_estimators: 300
+  max_depth: 5
+  learning_rate: 0.05
+  subsample: 0.8
+  colsample_bytree: 0.8
+  calibration_method: "sigmoid"   # "sigmoid" = Platt Scaling, "isotonic" = Isotonic Regression
+  random_state: 42
+
+analista:
+  model_name: "ProsusAI/finbert"  # Modelo de Hugging Face, se descarga automaticamente (~438 MB)
+  batch_size: 32
+  max_length: 512
+  aggregation: "mean"             # Como agregar multiples titulares del mismo dia: mean | median
+  calibration_method: "sigmoid"
+  calibration_cv_folds: 5
+  random_state: 42
+  # Requiere variables de entorno ALPACA_API_KEY y ALPACA_SECRET_KEY
+  # Obtener gratis en https://alpaca.markets (cuenta paper trading)
+
+conspiranoico:
+  n_estimators: 100
+  contamination: 0.05             # Proporción esperada de anomalías (5%)
+  vix_ticker: "^VIX"
+  volatility_windows: [5, 20, 60] # Ventanas para volatilidad realizada rolling
+  correlation_window: 20          # Ventana para correlación rolling entre activos
+  volume_ratio_window: 20         # Ventana para volumen relativo
+  veto_threshold_percentile: 5    # Percentil del anomaly score en train que activa el veto (p5 = 5% más anómalos)
+  veto_mode: "binary"             # "binary" = veto todo-o-nada | "soft" = escala Kelly por anomaly score
+  soft_veto_scale_severe: 0.25    # Multiplicador Kelly si score < umbral p5 (solo en modo soft)
+  soft_veto_scale_moderate: 0.6   # Multiplicador Kelly si score entre p5 y p15
+  soft_veto_moderate_percentile: 15  # Percentil superior del tier moderado (debe ser > veto_threshold_percentile)
+  defensive_rotation:
+    enabled: false                   # Exp7: en crisis severa, rotar a TLT/IEF/GLD
+    trigger_scale: 0.25              # Activar si risk_scale <= este valor (tier severo en soft)
+    tickers: ["TLT", "IEF", "GLD"]
+    total_allocation: 0.30           # Fracción del portfolio en defensivos (repartida entre tickers)
+  random_state: 42
+
+cazador:
+  sell_threshold_pct: 0.20        # Alerta si insider vende > 20% de sus acciones
+  lookback_days: 30               # Ventana de búsqueda de actividad
+  form4_lag_days: 2               # Lag de reporte SEC Form 4 (máx. 2 días hábiles)
+  sec_user_agent: "Mario Merino mariomerinomartin2@gmail.com"  # Obligatorio: política fair-access SEC EDGAR
+  mode: "judge"                   # "judge" = feature del meta-modelo | "risk_modulator" = escala f* por ticker
+  alert_kelly_scale: 0.5          # Multiplicador Kelly cuando hay alerta insider (solo risk_modulator)
+
+judge_v1:
+  mode: "meta_model"              # "meta_model" = logistic mat+cazador | "pass_through" = solo Matemático (Exp6)
+  meta_model: "logistic"          # "logistic" o "xgboost"
+  calibration_method: "sigmoid"
+  random_state: 42
+
+explorador:
+  # Umbrales para proponer RETIRAR un activo (análisis de paper trades)
+  neutral_signal_days_threshold: 0.90   # f*=0 más del 90% de días → sin señal útil
+  min_prediction_accuracy: 0.50         # Accuracy < 50% → peor que azar
+  # Umbrales para evaluar candidatos a AÑADIR al universo
+  max_correlation_with_existing: 0.85   # Candidato redundante si corr > 0.85
+  min_data_years: 5                     # Al menos 5 años de historia disponible
+  min_avg_daily_volume: 500000          # Volumen mínimo para garantizar liquidez
+  review_period_days: 90                # Revisar el universo cada ~3 meses
+
+# Perfil de trading activo. Sobreescribe parámetros del config base.
+# Para cambiar de perfil: python run.py --profile profiles/long_term.yaml
+profile:
+  active: "swing"                       # swing | long_term | day_simulated
+  available:
+    - "profiles/swing.yaml"
+    - "profiles/long_term.yaml"
+    - "profiles/day_simulated.yaml"
+
+general:
+  random_seed: 42
+  log_level: "INFO"
+  log_dir: "logs"
+  experiments_dir: "experiments"

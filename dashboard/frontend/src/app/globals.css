@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+:root {
+  --background: #111111;
+  --foreground: #ededed;
+  --card: #1a1a1a;
+  --card-foreground: #ededed;
+  --muted: #262626;
+  --muted-foreground: #a1a1a1;
+  --border: #2e2e2e;
+  --accent: #1e40af;
+  --accent-foreground: #93c5fd;
+  --success: #065f46;
+  --success-foreground: #6ee7b7;
+  --destructive: #7f1d1d;
+  --destructive-foreground: #fca5a5;
+  --ring: #1e40af;
+  --radius: 0.5rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-ring: var(--ring);
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "Roboto Mono", "Fira Code", monospace;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@import "katex/dist/katex.min.css";

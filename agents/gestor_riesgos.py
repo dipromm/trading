@@ -117,6 +117,7 @@ class GestorRiesgos:
         p: float,
         b: float,
         asset_class: str = "equity",
+        kelly_fraction: float | None = None,
     ) -> float:
         """
         Calcula la fracción de capital a invertir via Fractional Kelly.
@@ -127,7 +128,7 @@ class GestorRiesgos:
         Donde:
             p   = probabilidad calibrada de subida [0, 1]
             b   = ratio ganancia media / pérdida media histórico (> 0)
-            rho = self.kelly_fraction (Half-Kelly = 0.5)
+            rho = kelly_fraction override o self.kelly_fraction (Half-Kelly = 0.5)
 
         Reglas:
             - Si b <= 0: retorna 0.0 (indefinido)
@@ -142,6 +143,7 @@ class GestorRiesgos:
             asset_class: Clase de activo del ticker. Determina el cap máximo.
                          Valores: "equity", "bond", "gold", "defensive_equity",
                          "international_equity"
+            kelly_fraction: Override opcional de rho para este cálculo (Exp5).
 
         Returns:
             f* ∈ [0, get_position_cap(asset_class)]
@@ -149,8 +151,9 @@ class GestorRiesgos:
         if b <= 0:
             return 0.0
 
+        rho = self.kelly_fraction if kelly_fraction is None else kelly_fraction
         kelly_full = p - (1 - p) / b
-        f_star = self.kelly_fraction * kelly_full
+        f_star = rho * kelly_full
 
         if f_star <= 0:
             return 0.0

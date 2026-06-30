@@ -1,0 +1,108 @@
+{
+  "timestamp": "20260622_035259",
+  "experiment": "fase6_mat_cazador_conspiranoico_exp1_menos_friccion",
+  "config_hash": "1782089830.517147",
+  "mas": {
+    "metrics": {
+      "total_return_pct": 86.64,
+      "annualized_return_pct": 17.78,
+      "sharpe_ratio": 0.861,
+      "max_drawdown_pct": -29.63,
+      "calmar_ratio": 0.6,
+      "win_rate_pct": 52.34,
+      "n_trading_days": 1005
+    },
+    "window_results": [
+      {
+        "total_return_pct": 23.97,
+        "annualized_return_pct": 22.76,
+        "sharpe_ratio": 1.426,
+        "max_drawdown_pct": -10.23,
+        "calmar_ratio": 2.225,
+        "win_rate_pct": 54.76,
+        "n_trading_days": 252,
+        "iteration": 1,
+        "val_start": "2021-01-01",
+        "val_end": "2022-01-01",
+        "n_tickers": 45,
+        "conspiranoico_stats": {
+          "n_days": 252,
+          "n_veto": 0,
+          "pct_veto": 0.0
+        }
+      },
+      {
+        "total_return_pct": -21.19,
+        "annualized_return_pct": -20.37,
+        "sharpe_ratio": -0.765,
+        "max_drawdown_pct": -29.28,
+        "calmar_ratio": -0.696,
+        "win_rate_pct": 43.43,
+        "n_trading_days": 251,
+        "iteration": 2,
+        "val_start": "2022-01-01",
+        "val_end": "2023-01-01",
+        "n_tickers": 45,
+        "conspiranoico_stats": {
+          "n_days": 251,
+          "n_veto": 6,
+          "pct_veto": 2.4
+        }
+      },
+      {
+        "total_return_pct": 44.55,
+        "annualized_return_pct": 38.52,
+        "sharpe_ratio": 2.334,
+        "max_drawdown_pct": -10.19,
+        "calmar_ratio": 3.782,
+        "win_rate_pct": 53.6,
+        "n_trading_days": 250,
+        "iteration": 3,
+        "val_start": "2023-01-01",
+        "val_end": "2024-01-01",
+        "n_tickers": 45,
+        "conspiranoico_stats": {
+          "n_days": 250,
+          "n_veto": 3,
+          "pct_veto": 1.2
+        }
+      },
+      {
+        "total_return_pct": 34.95,
+        "annualized_return_pct": 32.28,
+        "sharpe_ratio": 1.505,
+        "max_drawdown_pct": -14.4,
+        "calmar_ratio": 2.242,
+        "win_rate_pct": 57.14,
+        "n_trading_days": 252,
+        "iteration": 4,
+        "val_start": "2024-01-01",
+        "val_end": "2025-01-01",
+        "n_tickers": 45,
+        "conspiranoico_stats": {
+          "n_days": 252,
+          "n_veto": 3,
+          "pct_veto": 1.2
+        }
+      }
+    ]
+  },
+  "buy_and_hold": {
+    "total_return_pct": 67.9,
+    "annualized_return_pct": 15.25,
+    "sharpe_ratio": 0.723,
+    "max_drawdown_pct": -31.36,
+    "calmar_ratio": 0.486,
+    "win_rate_pct": 52.44,
+    "n_trading_days": 1003
+  },
+  "sma_crossover": {
+    "total_return_pct": 14.47,
+    "annualized_return_pct": 4.21,
+    "sharpe_ratio": 0.329,
+    "max_drawdown_pct": -22.25,
+    "calmar_ratio": 0.189,
+    "win_rate_pct": 54.08,
+    "n_trading_days": 1004
+  }
+}

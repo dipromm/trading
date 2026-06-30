@@ -263,18 +263,374 @@ $$f^* = \rho \left( p - \frac{1-p}{b} \right)$$
 
 ---
 
-### Fase 7 — Dashboard y XAI (Semanas 13-14)
+### Fase 7 — Dashboard Institucional y Paper Trading (Semanas 13-20)
 
-**Objetivo:** hacer el sistema presentable para portfolio y para reclutadores técnicos.
+**Objetivo:** construir un hub visual con aspecto de portal interno de fondo cuantitativo que demuestre arquitectura desacoplada, rigor matemático y separe visualmente la experimentación del trading en producción. El dashboard debe ser navegable por cualquier visitante sin contexto previo y demostrable en una entrevista técnica en tiempo real.
 
-- [ ] Dashboard en **Streamlit**: curva de capital, estado de cartera, operaciones recientes
-- [ ] Panel de "Veredicto del Consejo": muestra en tiempo real los pesos y votos de cada agente
-- [ ] Log auditable por operación (formato JSON + visualización en tabla): `{"fecha": "2024-03-15", "ticker": "AAPL", "orden": "COMPRA", "votos": {"matematico": 0.7, "analista": 0.4, "cazador": "silencio", "conspiranoico": "inactivo"}, "kelly_fraction": 0.12}`
-- [ ] Modo paper trading: el sistema ingiere datos del día anterior y muestra la decisión del día actual
+**Cronología visual del sistema (obligatoria en la UI):**
+1. Walk-Forward Validation (2018-01-01 a 2024-12-31): entrenamiento rodante.
+2. Holdout Ciego (2025-01-01 a actualidad): modelos congelados (solo `.predict()`).
+3. Paper Trading (actualidad en adelante): ejecución diaria con datos T-1.
 
 ---
 
-### Fase 8 — Perfiles de Trading (Semanas 15-16)
+#### Decisión Arquitectural de Deploy — Resolver ANTES de escribir código
+
+Este es el riesgo técnico más alto de la fase. FastAPI lee archivos locales (`experiments/*.json`, `logs/paper_trading/*.jsonl`), pero las plataformas cloud de contenedores como Railway o Fly.io tienen **filesystem efímero**: cada redeploy destruye los archivos del contenedor. Además, `run_daily.py` corre en la máquina local o en un servidor, no en la plataforma de frontend. Las tres opciones viables son:
+
+| Opción | Ventajas | Desventajas | Veredicto |
+|---|---|---|---|
+| **VPS con docker-compose** | Filesystem persistente; `run_daily.py` como cron local; toda la complejidad en un servidor | Coste mensual (~5-10 €/mes); requiere administración básica del servidor | **Recomendada para MVP** |
+| **GitHub Actions + commit de logs** | Gratis; logs versionados en git | Historial de git crece indefinidamente; latencia de redeploy tras cada ejecución diaria | Viable solo si los logs se guardan en una rama `data` sin historial (`--orphan`) |
+| **S3/R2 como storage compartido** | Escalable; desacopla almacenamiento del servidor | Añade dependencia externa y coste | Overkill para v1 |
+
+**Decisión para este plan:** VPS con docker-compose. `run_daily.py` se ejecuta como cron job en el VPS (post-cierre NYSE, ~23:00 UTC). FastAPI y Next.js leen del mismo filesystem. Los logs de paper trading persisten en un volumen Docker entre deploys.
+
+**Implicación directa en `.gitignore`** — añadir antes de cualquier commit de esta fase:
+
+```
+logs/paper_trading/
+logs/trades/
+logs/errors/
+data/cache/
+data/raw/
+models/*.joblib
+models/*.pkl
+```
+
+Los modelos serializados no se suben al repositorio (pueden ser >100 MB). Se regeneran en el VPS con un script de setup documentado en el README.
+
+---
+
+#### Stack Tecnológico
+
+| Capa | Tecnología | Justificación |
+|---|---|---|
+| Backend API | **FastAPI** + Pydantic v2 | Schema explícito para todos los responses; `/docs` Swagger automático como asset de portfolio |
+| Frontend | **Next.js** (React) + TypeScript | App Router; SSR para SEO de la landing page pública |
+| Estilos + Componentes | **Tailwind CSS** + **shadcn/ui** | Componentes institucionales preestilizados (Card, Badge, Table); dark mode nativo; elimina ~40% del CSS custom |
+| Gráficos | **Recharts** | Una sola librería; `ComposedChart` para equity curve; `AreaChart` con dominio negativo para drawdown |
+| Tablas | **TanStack Table v8** | Sorting, filtering y paginación server-side para experimentos (80+ filas) y log de operaciones |
+| Data fetching | **TanStack Query (React Query)** | Caching automático en cliente, loading/error states declarativos, refetch on window focus |
+| Tipos de API | **openapi-typescript** | Genera tipos TypeScript desde el `openapi.json` de FastAPI automáticamente; tipado estricto end-to-end |
+| XAI — Reliability Diagram | **Recharts** (datos JSON desde FastAPI) | Coherencia visual con el resto del dashboard; interactivo |
+| XAI — SHAP Beeswarm | PNG pre-computado con tema oscuro matplotlib | Complejidad del plot justifica imagen; se genera una vez al día en `run_daily.py`, no on-demand |
+| Fórmulas | **KaTeX** | Renderizado de fórmulas matemáticas (Kelly, etc.) |
+
+> **Por qué no generar PNGs on-demand:** calcular `shap.TreeExplainer` sobre 46 tickers puede tardar 30-90 segundos en un servidor pequeño. Generado on-demand produce timeouts. La solución correcta es pre-computar en `run_daily.py` y servir como fichero estático. El PNG de SHAP usa tema oscuro explícito para coherencia visual:
+> ```python
+> plt.style.use('dark_background')
+> fig.patch.set_facecolor('#111111')
+> ax.set_facecolor('#1a1a1a')
+> ```
+
+---
+
+#### Rutas del Frontend (Next.js App Router)
+
+| Ruta | Módulo | Contenido |
+|---|---|---|
+| `/` | **Overview / Landing** | Descripción del sistema, métricas clave del holdout, navegación a los módulos. URL que se comparte en LinkedIn y el README |
+| `/lab` | **El Laboratorio Quant** | Validación histórica completa (equity curve, métricas, XAI) |
+| `/desk` | **El Trading Desk** | Estado actual de la cartera en producción |
+| `/experiments` | **Comparativa de Experimentos** | Tabla de los 80+ experimentos con métricas comparables |
+| `/architecture` | **Arquitectura del Sistema** | Diagrama de flujo, stack, limitaciones conocidas |
+
+La ruta `/` es imprescindible para portfolio: un reclutador que llega sin contexto debe entender el sistema en 10 segundos sin abrir el README.
+
+---
+
+#### Directrices de UI/UX (Restricciones)
+
+- **Dark Mode obligatorio**: fondos oscuros (#111, #1a1a1a, negros) estilo terminal Bloomberg
+- **Colores de datos**: azul marino/eléctrico (neutro), rojo tenue (pérdidas), verde esmeralda apagado (ganancias)
+- **Tipografía**: Inter (UI) + Roboto Mono/Fira Code (números y tablas). Alineación numérica a la derecha
+- **Idioma de la UI**: **todo en inglés**. Los nombres de los agentes ("El Matemático", etc.) se mantienen en español como identidad del sistema, pero todos los labels, métricas, botones y mensajes de estado van en inglés
+- **Prohibidos**: gráficos 3D, colores neón, datos mock
+- **Sidebar global** (fijo, izquierda): logo del sistema, health indicator del pipeline (siempre visible en todas las páginas), navegación principal, capital actual y retorno acumulado desde inicio del paper trading
+- **Orden de componentes dentro de cada página**: cada página debe narrar una historia de arriba a abajo. Ver detalle en cada módulo
+
+---
+
+#### Fase 7.1 — Infraestructura y Pipeline de Paper Trading (Semanas 13-15)
+
+**Prerrequisito 0: Gestión de secrets — antes de cualquier código**
+
+- [ ] Crear `.env.example` en la raíz con todas las variables necesarias documentadas (API keys, rutas, configuración de servidor, dominio de producción)
+- [ ] Instalar `python-dotenv`; cargar `.env` en todos los scripts Python que accedan a APIs externas
+- [ ] Verificar que `.env` está en `.gitignore` y no aparece en el historial de git (`git log --all --full-history -- .env`)
+- [ ] Configurar `ALLOWED_ORIGINS` como variable de entorno para que CORS funcione en local y en producción sin cambiar código:
+  ```python
+  origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+  ```
+
+**Prerrequisito 1: Schemas Pydantic antes de escribir el frontend**
+
+Definir todos los modelos de response en `dashboard/api/schemas.py` antes de implementar ningún router. El frontend depende de estos contratos. Cualquier cambio posterior en el schema sin actualizar el frontend rompe la app silenciosamente.
+
+```python
+class KellyInputs(BaseModel):
+    p: float   # win probability from calibrated model
+    b: float   # win/loss ratio
+    rho: float # Kelly fraction multiplier (0.5 for half-Kelly)
+
+class AgentVotes(BaseModel):
+    matematico: float
+    analista: float
+    cazador: Literal["signal", "silence"]
+    conspiranoico: Literal["active", "inactive"]
+
+class PaperTradingLog(BaseModel):
+    date: date
+    ticker: str
+    action: Literal["BUY", "SELL", "HOLD"]
+    probability: float
+    kelly_fraction: float
+    kelly_inputs: KellyInputs
+    agent_votes: AgentVotes
+    reason: str
+    position_size_eur: float
+
+class EquityCurvePoint(BaseModel):
+    date: date
+    portfolio_value: float
+    buyhold_value: float
+    sma_value: float
+    period: Literal["walkforward", "holdout", "paper_trading"]
+```
+
+Generar los tipos TypeScript automáticamente cada vez que cambie el schema:
+```bash
+npx openapi-typescript http://localhost:8000/openapi.json -o dashboard/frontend/src/types/api.ts
+```
+
+**Prerrequisito 2: Selección documentada del experimento canónico**
+
+La elección del experimento que se usa en el dashboard necesita un criterio público y reproducible. Sin él, cualquier revisor técnico puede cuestionar data snooping.
+
+- [ ] Documentar el criterio en `experiments/README.md`: "Se selecciona el experimento con mayor Sharpe Ratio en el período de validación walk-forward, excluyendo experimentos con Max Drawdown > 30%. En caso de empate, se prioriza el Calmar Ratio."
+- [ ] Documentar el ID del experimento elegido, su config hash y sus métricas clave
+- [ ] El criterio debe ser reproducible: si alguien ejecuta el walk-forward desde cero con las mismas seeds, debe llegar al mismo experimento
+
+**Prerrequisito 3: Model Registry**
+
+- [ ] Crear `models/registry.json` que exponga el endpoint `/api/status`:
+  ```json
+  {
+    "active_model": {
+      "experiment_id": "fase6_mat_cazador_conspiranoico_exp1_menos_friccion_20260622_035259",
+      "trained_at": "2026-06-22T03:52:59",
+      "model_hash_sha256": "abc123...",
+      "val_sharpe": 1.34,
+      "val_max_drawdown": -0.18,
+      "holdout_start": "2025-01-01",
+      "last_run_at": null,
+      "last_run_status": null,
+      "files": {
+        "matematico": "models/matematico_v1.joblib",
+        "juez": "models/juez_v1.joblib"
+      }
+    }
+  }
+  ```
+- [ ] Al serializar los modelos con joblib (no pickle), calcular el SHA-256 del fichero y escribirlo en el registry
+- [ ] `run_daily.py` actualiza `last_run_at` y `last_run_status` en el registry al finalizar cada ejecución
+
+**Pipeline de datos**
+
+- [ ] Serializar modelos del experimento canónico con joblib — sin `.fit()` en producción
+- [ ] Regenerar `equity_curve.csv` unificando las tres fuentes en una sola serie con el campo `period`:
+  - **Walk-Forward**: reconstruir del `results.json` del experimento canónico
+  - **Holdout**: ejecutar el backtester en modo `predict_only` desde 2025-01-01 con modelos congelados
+  - **Paper Trading**: se irá añadiendo dinámicamente desde los logs diarios
+  - El valor inicial del Holdout = valor final del Walk-Forward (continuidad visual); el valor inicial del Paper Trading = valor final del Holdout
+  - Formato: `{date, portfolio_value, buyhold_value, sma_value, period}` — el campo `period` determina el color de fondo en el gráfico
+- [ ] Implementar `run_daily.py` con manejo de errores robusto:
+  - Detectar festivos NYSE (`pandas_market_calendars`) y salir limpiamente con log `{"status": "market_closed", "date": "..."}`
+  - Try/except global: cualquier excepción no controlada escribe traceback completo en `logs/errors/YYYY-MM-DD.json` y actualiza `registry.json` con `last_run_status: "error"`
+  - Al finalizar correctamente: generar PNG de SHAP Beeswarm y Reliability Diagram con tema oscuro y guardarlos en `dashboard/api/static/` (sobreescribiendo los anteriores)
+  - Actualizar `logs/positions_current.json` con el estado actual de la cartera (ver siguiente punto)
+- [ ] Formato completo del log paper trading (con inputs Kelly explícitos para mostrar en la UI):
+  ```json
+  {
+    "date": "2026-06-28",
+    "ticker": "AAPL",
+    "action": "BUY",
+    "probability": 0.67,
+    "kelly_fraction": 0.089,
+    "kelly_inputs": {"p": 0.67, "b": 1.4, "rho": 0.5},
+    "agent_votes": {"matematico": 0.67, "analista": 0.71, "cazador": "signal", "conspiranoico": "inactive"},
+    "reason": "signal",
+    "position_size_eur": 890.0
+  }
+  ```
+- [ ] Implementar tracking de posiciones abiertas: `run_daily.py` mantiene `logs/positions_current.json` con el estado actual de cartera (`ticker → {quantity, entry_price, entry_date, current_value, unrealized_pnl}`). Este archivo se sobreescribe en cada ejecución; el endpoint `/api/live/positions` lo lee directamente. No reconstruir el estado desde el historial de trades en cada request.
+
+**FastAPI (`dashboard/api/main.py`)**
+
+- [ ] Configurar `/docs` con título, descripción y versión — es un asset de portfolio que demuestra API-first thinking:
+  ```python
+  app = FastAPI(
+      title="MAS Trading System API",
+      description="Multi-Agent Trading System — Walk-Forward, Holdout & Paper Trading",
+      version="1.0.0"
+  )
+  ```
+- [ ] Implementar caching para endpoints costosos (el endpoint de experimentos lee 80+ archivos en cada request sin caché):
+  ```python
+  from functools import lru_cache
+  from datetime import date
+
+  @lru_cache(maxsize=1)
+  def _load_all_experiments(cache_date: date) -> list[dict]:
+      # cache_date = date.today() actúa como cache key diario
+      ...
+  ```
+- [ ] Router `/api/historical/`:
+  - `GET /equity-curve` → serie completa con campo `period` por punto (para colorear el fondo en el frontend)
+  - `GET /metrics` → métricas diferenciadas por período (walkforward, holdout)
+  - `GET /walkforward-windows` → tabla de ventanas del walk-forward
+  - `GET /shap-beeswarm` → redirige al PNG estático pre-computado en `static/`
+  - `GET /reliability-diagram` → devuelve JSON `{calibration_curve: [{mean_predicted, fraction_positives}], perfect_calibration: [...]}`
+- [ ] Router `/api/live/`:
+  - `GET /status` → lee `models/registry.json`; incluye `last_run_status` y `last_run_at` para el health indicator
+  - `GET /positions` → lee `logs/positions_current.json`
+  - `GET /council-verdict` → última inferencia del día (último `YYYY-MM-DD.jsonl`)
+  - `GET /trades?limit=50&offset=0` → paginación real en el servidor; no devolver todos los logs de golpe
+  - Si paper trading no ha arrancado: devolver `{"status": "not_started"}` en todos los endpoints de `/api/live/`
+- [ ] Router `/api/experiments/` → leer todos los `experiments/*/results.json` con caching diario
+- [ ] Rate limiting básico con `slowapi` (100 req/min por IP) si el deploy es público
+
+---
+
+#### Fase 7.2 — Módulo A: El Laboratorio Quant (Semanas 15-17)
+
+Página `/lab`. Demuestra el rigor metodológico del sistema. **Orden de componentes (de arriba a abajo — narrativa visual obligatoria):**
+1. Equity Curve vs Baselines — la historia
+2. Drawdown Underwater Plot — las consecuencias
+3. Métricas Institucionales (cards) — los números que respaldan la curva
+4. Tabla de ventanas walk-forward — el detalle metodológico
+5. XAI — Reliability Diagram + SHAP Beeswarm — la explicabilidad
+
+**Implementación:**
+
+- [ ] **Equity Curve vs Baselines** (`ComposedChart` de Recharts):
+  - Tres líneas (MAS vs Buy & Hold vs SMA Crossover), eje Y logarítmico
+  - **Normalizado a base 100** en la fecha de inicio: permite comparación visual directa cuando las líneas divergen a distintas escalas
+  - Línea vertical punteada en `2025-01-01` con labels "Walk-Forward" y "Holdout Ciego"; implementado con `<ReferenceLine>` de Recharts
+  - Fondos diferenciados con `<ReferenceArea>`: gris oscuro (`rgba(255,255,255,0.03)`) para Walk-Forward, negro puro para Holdout
+  - Tooltip enriquecido al hover: fecha, valor normalizado de cada estrategia y retorno acumulado desde inicio
+  - `<Brush>` de Recharts en la parte inferior para zoom interactivo por período
+  - Anotaciones de eventos históricos con `<ReferenceLine>` vertical y etiqueta: COVID crash (2020-03-23), Rate Hike Cycle (2022-03-16), SVB Crisis (2023-03-10) — demuestra que el sistema operó durante stress reales
+
+- [ ] **Drawdown Underwater Plot** (`AreaChart` de Recharts): valores negativos de drawdown (%) con dominio Y fijado a `[minDrawdown, 0]`, fill `#dc2626` con opacidad 0.4 bajo la línea de 0%
+
+- [ ] **Métricas Institucionales** (cards con shadcn/ui `<Card>`):
+  - Sharpe Ratio, Sortino Ratio, Calmar Ratio, Max Drawdown, Retorno Anualizado, Win Rate, Profit Factor
+  - Dos columnas: Walk-Forward | Holdout Ciego
+  - Valor del baseline Buy & Hold debajo de cada métrica en pequeño (referencia directa sin scrollear)
+  - Indicador visual discreto (punto verde/rojo) si supera o no el objetivo del plan (Sharpe > 1.0, Drawdown < 25%)
+
+- [ ] **Tabla de ventanas walk-forward** (TanStack Table): columnas `val_start`, `val_end`, Sharpe, Return, Drawdown; color coding por fila (Sharpe > 1.0 → fondo verde muy oscuro, < 0.5 → fondo rojo muy oscuro); sortable por columna
+
+- [ ] **XAI — Reliability Diagram**: FastAPI devuelve JSON con los puntos `(mean_predicted, fraction_of_positives)`; renderizado con `LineChart` de Recharts incluyendo la línea de calibración perfecta como referencia. Coherencia visual con el resto del dashboard
+
+- [ ] **XAI — SHAP Beeswarm**: renderizar el PNG pre-computado con badge de fecha de generación ("Generated: Jun 28, 2026"). Nota en la UI: "Generated server-side · Updated daily"
+
+- [ ] **Enlace a `/experiments`** al final de la página con el número total de experimentos disponibles
+
+---
+
+#### Fase 7.3 — Módulo B: El Trading Desk (Semanas 17-18)
+
+Página `/desk`. Responde a: "¿Qué hace el modelo hoy?" **Orden de componentes (de arriba a abajo — contexto antes de datos):**
+1. Health indicator + aviso de datos con fecha real — contexto crítico
+2. Matriz del Veredicto del Consejo — la pregunta central
+3. Gestión de Riesgo — donut + fórmula Kelly con valores reales
+4. Últimas Operaciones — log auditable
+
+**Implementación:**
+
+- [ ] **Aviso de datos con fecha real**: no un label genérico T-1, sino la fecha exacta del último cierre calculada con `pandas_market_calendars` (cubre festivos y weekends):
+  `Last market close: Friday, Jun 27, 2026 · Pipeline ran: Jun 28 at 01:14 UTC`
+
+- [ ] **Health Indicator** (lee `/api/live/status`):
+  - Verde: `last_run_status: "ok"` y `last_run_at` dentro de las últimas 26 horas
+  - Amarillo: `last_run_at` con más de 26 horas de antigüedad (ejecución de ayer perdida)
+  - Rojo: `last_run_status: "error"` — con botón "View error log" que muestra el mensaje de error desde `logs/errors/YYYY-MM-DD.json`
+
+- [ ] **Matriz del Veredicto del Consejo** (TanStack Table):
+  - Ordenada por `kelly_fraction` descendente por defecto (los tickers más interesantes primero)
+  - Filtros por clase de activo (Equity / Bond / Gold / Defensive) como tabs o select sobre la tabla
+  - Color de la fila completa según veredicto final del Juez: verde muy oscuro (BUY), rojo muy oscuro (SELL), fondo neutro (HOLD)
+  - El Matemático: barra de progreso de probabilidad [0, 1]
+  - El Analista: barra de progreso de sentimiento [0, 1]
+  - El Cazador: badge "SIGNAL" (naranja) o "SILENCE" (gris)
+  - El Conspiranoico: semáforo verde (inactive) o rojo (active — exposición reducida)
+  - f* Kelly: número en Roboto Mono alineado a la derecha
+
+- [ ] **Gestión de Riesgo**:
+  - Donut (`PieChart` de Recharts): distribución actual del capital por clase de activo vs liquidez, con los caps del plan como referencia en el tooltip
+  - Fórmula Fractional Kelly renderizada con KaTeX: $f^* = \rho \times \left(p - \frac{1-p}{b}\right)$
+  - Debajo de la fórmula: ejemplo en vivo con los valores del ticker de mayor f* del día (`ρ=0.5, p=0.67, b=1.4 → f*=0.089`), leídos de `kelly_inputs` del log — la fórmula cobra vida con datos reales
+
+- [ ] **Últimas Operaciones** (TanStack Table, paginación server-side via `/api/live/trades`): columnas Date, Ticker, Action, f* (Kelly), Reason, Agent Votes (columna expandible). Botón de exportar a CSV
+
+---
+
+#### Fase 7.4 — Módulo C: Landing Page y Arquitectura (Semana 18)
+
+- [ ] **Ruta `/` — Overview/Landing**: no es un dashboard de datos, es una presentación del sistema para cualquier visitante
+  - Nombre del sistema y descripción en 3 líneas
+  - Cards de los 4 agentes: nombre, función y tecnología en una línea cada uno
+  - 4 métricas clave del holdout en grande: Sharpe, Max DD, Calmar, Outperformance vs Buy & Hold
+  - Dos CTAs: "View the Lab" → `/lab` y "View the Desk" → `/desk`
+  - Esta es la URL que va en el README y en LinkedIn
+
+- [ ] **Ruta `/architecture` — Arquitectura del Sistema**:
+  - Diagrama del flujo de datos: Agentes → Juez → Backtester → Logs → FastAPI → Next.js (SVG estático o Mermaid)
+  - Tabla del stack tecnológico con justificación (misma que este plan)
+  - Sección **"Known Limitations"** — honestidad explícita que demuestra madurez de ingeniería:
+    - Datos con lag T-1 (APIs gratuitas)
+    - Universo de acciones congelado a 2018 (survivorship bias documentado)
+    - Paper trading sin ejecución real en broker
+    - Walk-forward limitado a señales diarias (no intradía)
+
+---
+
+#### Fase 7.5 — Pulido, Tests y Deploy (Semanas 19-20)
+
+- [ ] Responsive para tablet (mínimo — no necesita ser mobile-first)
+- [ ] Loading states en todos los componentes (TanStack Query gestiona `isLoading` automáticamente)
+- [ ] Empty states en todos los componentes: `{"status": "not_started"}` → UI limpia con mensaje contextual, nunca un error visible
+- [ ] Error boundaries: si FastAPI no responde, mostrar "System offline · Last data: [fecha del último cache]" usando el cache de TanStack Query — no crash
+- [ ] **Tests de componentes React** (Jest + Testing Library) — mínimo 3 tests críticos:
+  - El health indicator muestra estado "error" cuando `last_run_status` es `"error"`
+  - El empty state del Trading Desk cuando paper trading no ha arrancado
+  - La normalización base-100 de la equity curve calcula correctamente el primer punto como 100
+- [ ] Generar tipos TypeScript finales desde OpenAPI y verificar que no hay errores de compilación: `npx openapi-typescript http://localhost:8000/openapi.json -o src/types/api.ts && tsc --noEmit`
+- [ ] `docker-compose.yml` para VPS con volúmenes persistentes para logs y modelos:
+  ```yaml
+  volumes:
+    - ./logs:/app/logs
+    - ./models:/app/models
+    - ./experiments:/app/experiments
+    - ./dashboard/api/static:/app/static
+  ```
+- [ ] Configurar cron job en el VPS (post-cierre NYSE): `0 23 * * 1-5 cd /app && python run_daily.py >> logs/cron.log 2>&1`
+- [ ] **README como entregable de primer nivel** (no afterthought — planificar como una tarea propia):
+  - Diagrama de arquitectura en Mermaid dentro del propio README
+  - Screenshot del dashboard con la línea de separación Walk-Forward/Holdout visible
+  - Tabla de resultados: Sharpe, Max DD, Calmar del sistema vs baselines, desglosados por período (walk-forward vs holdout)
+  - Instrucciones de setup reproducibles en un comando: `cp .env.example .env && docker-compose up`
+  - Sección "Known Limitations" (las mismas que `/architecture`)
+  - Link al dashboard desplegado, a `/docs` de la API y al video demo
+
+**Entregable:** dashboard desplegado en VPS con URL pública compartible. Pipeline diaria ejecutándose como cron. Datos reales navegables por cualquier visitante sin contexto previo. README que permite reproducir el entorno en un comando. Tipado estricto end-to-end desde Pydantic (Python) hasta TypeScript (React) generado automáticamente.
+
+---
+
+### Fase 8 — Perfiles de Trading (Semanas 21-22)
 
 **Objetivo:** mostrar el mismo sistema operando con tres horizontes distintos. Requiere que la Fase 7 esté completa y el sistema sea estable.
 
@@ -290,7 +646,7 @@ $$f^* = \rho \left( p - \frac{1-p}{b} \right)$$
 
 ---
 
-### Fase 9 — El Explorador (Semanas 17-18)
+### Fase 9 — El Explorador (Semanas 23-24)
 
 **Objetivo:** monitoreo activo del universo durante el paper trading, con propuestas de cambios supervisadas por el humano.
 
@@ -298,7 +654,7 @@ $$f^* = \rho \left( p - \frac{1-p}{b} \right)$$
 - [ ] Implementar `Explorador.find_removal_candidates()`: detecta activos con f*=0 crónico o accuracy < 50%
 - [ ] Implementar `Explorador.evaluate_candidate()`: evalúa un ticker externo (correlación, calidad de datos, liquidez)
 - [ ] Implementar `UniverseManager`: aplica cambios aprobados a `data/universe_live.csv` con log auditable
-- [ ] Añadir pestaña "El Explorador" en el dashboard de Streamlit:
+- [ ] Añadir módulo "El Explorador" en el dashboard:
   - Lista de recomendaciones pendientes (RETIRAR / AÑADIR) con evidencia
   - Botones de aprobación/rechazo para cada recomendación
   - Historial de cambios pasados (`logs/universe_changes.jsonl`)
@@ -327,11 +683,11 @@ $$f^* = \rho \left( p - \frac{1-p}{b} \right)$$
 
 ---
 
-### Fase 10 — Web Portfolio y Demo Pública (Semanas 19-20)
+### Fase 10 — Web Portfolio y Demo Pública (Semanas 25-26)
 
 **Objetivo:** hacer el proyecto público, documentado y demostrable para reclutadores.
 
-- [ ] Publicar el dashboard en **Streamlit Cloud** (gratuito) o exportar capturas para la web
+- [ ] Deploy del dashboard en **Vercel** (Next.js) + **Railway/Fly.io** (FastAPI) — o docker-compose en VPS
 - [ ] Página web de portfolio con explicación del sistema, métricas clave y comparativa de perfiles
 - [ ] Video demo de 3-5 minutos mostrando: decisión diaria → log auditable → métricas históricas
 - [ ] README final pulido: arquitectura, instalación, resultados, limitaciones honestas
@@ -469,7 +825,9 @@ El éxito del proyecto **no se mide por el beneficio neto**. Estas son las métr
 | **ML / Agentes** | `scikit-learn`, `xgboost`, `transformers` (FinBERT) | Ecosistema maduro |
 | **RL (v2)** | `stable-baselines3` + `gymnasium` | Estándar actual para RL en Python |
 | **Backtesting** | `vectorbt` o `backtesting.py` + lógica propia | vectorbt es muy rápido para backtests vectorizados |
-| **Dashboard** | `Streamlit` | Rápido de desarrollar, aspecto profesional |
+| **Dashboard API** | `FastAPI` | Sirve datos locales via REST; desacopla backend de UI |
+| **Dashboard Frontend** | `Next.js` (React) + TypeScript + Tailwind CSS | SPA profesional, dark mode institucional, tipado estricto |
+| **Gráficos** | `Recharts` + server-side PNG (SHAP/calibración) | Una librería única en frontend; plots complejos generados en Python |
 | **Logging XAI** | JSON estructurado + `pandas` para visualización | Simple, auditable, sin dependencias extra |
 
 ---
@@ -512,7 +870,17 @@ trading-mas/
 │   ├── test_kelly.py                    # f*≤0 nunca genera compra; caps por clase
 │   └── test_data_integrity.py           # Sin gaps, sin NaN, sin fechas futuras en features
 ├── dashboard/
-│   └── app.py                           # Streamlit (con pestaña comparativa de perfiles y El Explorador)
+│   ├── api/                            # FastAPI backend
+│   │   ├── main.py                     # App FastAPI + CORS
+│   │   ├── routers/
+│   │   │   ├── historical.py           # /api/historical/* (equity, métricas, XAI plots)
+│   │   │   ├── live.py                 # /api/live/* (paper trading, posiciones)
+│   │   │   └── experiments.py          # /api/experiments/* (comparativa)
+│   │   └── services/                   # Lógica de lectura de archivos
+│   └── frontend/                       # Next.js + TypeScript + Tailwind
+│       ├── src/app/                    # App Router (pages)
+│       ├── src/components/             # Componentes React reutilizables
+│       └── tailwind.config.ts          # Dark mode institucional
 ├── logs/
 │   ├── trades/                          # Logs JSON auditables por operación (usados por El Explorador)
 │   ├── explorador_recommendations.jsonl # Recomendaciones pendientes de aprobación humana
@@ -539,10 +907,10 @@ trading-mas/
 | 4 — Analista | 7-8 | El ensemble Matemático+Analista supera al Matemático solo |
 | 5 — Riesgos/Insiders | 9-10 | El Max Drawdown se reduce al añadir el Gestor de Riesgos |
 | 6 — Conspiranoico/RL | 11-12 | El Conspiranoico reduce pérdidas en períodos de crisis documentados |
-| 7 — Dashboard | 13-14 | Demo funcional: datos → decisión → log auditable → visualización |
-| 8 — Perfiles | 15-16 | Tabla comparativa de Sharpe/Drawdown para Swing, Long-term y Day Simulated |
-| 9 — El Explorador | 17-18 | Flujo completo: recomendación → aprobación humana → cambio en universe_live.csv |
-| 10 — Demo pública | 19-20 | Dashboard público + README final + métricas honestas documentadas |
+| 7 — Dashboard Institucional | 13-20 | Pipeline paper trading funcional en VPS + dashboard Next.js/FastAPI desplegado con URL pública: Landing page navegable sin contexto previo, Laboratorio Quant (equity curve base-100 con línea 2025-01-01 + anotaciones de eventos históricos + brush interactivo, métricas con comparativa de baselines inline, XAI interactivo), Trading Desk (health indicator, veredicto del consejo ordenado por Kelly, log auditable paginado), página de arquitectura con limitaciones honestas. Tipado TypeScript generado desde OpenAPI. Tests de componentes críticos pasando. |
+| 8 — Perfiles | 21-22 | Tabla comparativa de Sharpe/Drawdown para Swing, Long-term y Day Simulated |
+| 9 — El Explorador | 23-24 | Flujo completo: recomendación → aprobación humana → cambio en universe_live.csv |
+| 10 — Demo pública | 25-26 | Dashboard público con URL definitiva + README final con diagrama de arquitectura Mermaid, screenshots y métricas honestas documentadas |
 
 ---
 
