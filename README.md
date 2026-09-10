@@ -143,19 +143,25 @@ Abrir **http://localhost:3000** (Lab, Desk, Experiments, etc.). La API queda en 
 
 #### 4. Paper trading diario (días hábiles NYSE)
 
-Tras el cierre de mercado, actualiza decisiones, posiciones y artefactos XAI:
+Tras el cierre de mercado, actualiza decisiones, posiciones, **curva de equity del Lab** y artefactos XAI.
 
 ```bash
 .venv\Scripts\activate
 python run_daily.py
 ```
 
-- Sin argumentos usa **ayer** como fecha objetivo.
-- En **fin de semana o festivos** sale con `market_closed` y no modifica posiciones ni logs del desk.
-- Para ponerse al día tras varios días sin correr:
+**Comportamiento por defecto (catch-up automático):** detecta el último día con datos (`paper_equity.csv`, logs `YYYY-MM-DD.jsonl` o `positions_current.json`) y procesa **todos los días hábiles NYSE pendientes hasta ayer**.
+
+- En **fin de semana o festivos** no hay días hábiles en el rango → sale con `up_to_date` o `market_closed`.
+- Cada ejecución exitosa añade puntos a `paper_equity.csv` y al final regenera `equity_curve.csv` una sola vez.
+- Solo ayer (útil en cron diario): `python run_daily.py --no-catch-up`
+- Un día concreto: `python run_daily.py --date 2026-06-26`
+- Reprocesar días que ya tienen log: `python run_daily.py --force`
+
+Si corriste `run_daily` varios días **antes** de tener tracking de equity, rellena la curva histórica con:
 
 ```bash
-python run_daily.py --date 2026-06-26
+python -m scripts.backfill_paper_equity --from 2026-06-19 --to 2026-06-30
 ```
 
 #### Resumen rápido (día a día)
@@ -169,6 +175,7 @@ cd dashboard/frontend && npm run dev
 
 # Tras cierre NYSE (lun–vie), opcional:
 python run_daily.py
+# equivalente explícito solo-ayer: python run_daily.py --no-catch-up
 ```
 
 ### Manual setup (referencia mínima)

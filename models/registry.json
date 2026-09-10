@@ -1,16 +1,16 @@
 {
   "active_model": {
     "experiment_id": "fase6_mat_cazador_conspiranoico_exp1_menos_friccion_20260622_035259",
-    "trained_at": "2026-06-28T10:57:06",
+    "trained_at": "2026-07-29T12:00:15",
     "model_hash_sha256": {
-      "matematico": "1eb1bbada7d32d06f4c74fbf5824cf2770793daf61293313c493d527540c06ca",
-      "juez": "635cf35eedc551369439f51b2a67540b9a53740a0af61870afc2fcbb173f00a7"
+      "matematico": "5fd8e42004ee1232570b945f18b3cc154006e3a939d2bb1509cbfe5de58dd4d3",
+      "juez": "b9a94714000a23f577600a12e267f475c31ca3f56756d8287c76d25b392d9693"
     },
     "val_sharpe": 0.861,
     "val_max_drawdown": -0.2963,
     "holdout_start": "2025-01-01",
-    "last_run_at": "2026-06-28T11:38:12",
-    "last_run_status": "market_closed",
+    "last_run_at": "2026-08-10T00:17:40",
+    "last_run_status": "success",
     "files": {
       "matematico": "models/matematico_v1.joblib",
       "juez": "models/juez_v1.joblib"

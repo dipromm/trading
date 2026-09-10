@@ -7,7 +7,11 @@ logs decisions, updates positions, and generates XAI artifacts.
 
 Usage:
     python run_daily.py
-    python run_daily.py --date 2026-06-27  # backfill a specific date
+        # catch-up: all NYSE days from last processed through yesterday
+    python run_daily.py --no-catch-up
+        # only yesterday (typical cron)
+    python run_daily.py --date 2026-06-27
+        # single specific date
 
 Cron example (VPS):
     0 23 * * 1-5 cd /app && python run_daily.py >> logs/cron.log 2>&1
@@ -65,12 +69,19 @@ def load_serialized_models() -> tuple:
 
 
 def download_latest_data(cfg: dict, target_date: date) -> tuple[dict, pd.DataFrame]:
-    """Download T-1 data for all tickers + VIX."""
+    """Download T-1 data for all tickers + VIX, extending end_date to target_date."""
+    import copy
     from data.downloader import download_all
     from data.features import compute_all_features
     from data.regime import build_regime_features, download_vix
 
-    prices = download_all(cfg, force_download=True)
+    # Extend data range to cover target_date so paper-trading inference uses current prices
+    dl_cfg = copy.deepcopy(cfg)
+    paper_end = str(target_date + timedelta(days=1))
+    if paper_end > dl_cfg["data"]["end_date"]:
+        dl_cfg["data"]["end_date"] = paper_end
+
+    prices = download_all(dl_cfg, force_download=True)
     features = {t: compute_all_features(df, cfg) for t, df in prices.items()}
     vix = download_vix(cfg, force_download=True)
     regime_features = build_regime_features(prices, vix, cfg)
@@ -204,39 +215,28 @@ def run_inference(
     return decisions
 
 
-def update_positions(decisions: list[dict], target_date: date) -> None:
+def update_positions(decisions: list[dict], target_date: date, cfg: dict) -> None:
     """Update logs/positions_current.json based on today's decisions."""
+    from utils.paper_equity import (
+        apply_decisions_with_cash,
+        build_positions_state,
+        get_cash_balance,
+    )
+
     positions_path = ROOT / "logs" / "positions_current.json"
 
-    current = {}
+    current: dict = {}
     if positions_path.exists():
         try:
             current = json.loads(positions_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             current = {}
 
-    positions = current.get("positions", {})
-    initial_capital = 10000.0
+    positions = dict(current.get("positions") or {})
+    cash = get_cash_balance(current, cfg)
+    positions, cash = apply_decisions_with_cash(positions, cash, decisions)
 
-    for d in decisions:
-        if d["action"] == "BUY" and d["ticker"] not in positions:
-            positions[d["ticker"]] = {
-                "quantity": 1,
-                "entry_price": 0,
-                "entry_date": d["date"],
-                "allocated_eur": d["position_size_eur"],
-            }
-        elif d["action"] == "SELL" and d["ticker"] in positions:
-            del positions[d["ticker"]]
-
-    total_allocated = sum(p.get("allocated_eur", 0) for p in positions.values())
-    current_state = {
-        "as_of": str(target_date),
-        "positions": positions,
-        "total_allocated": round(total_allocated, 2),
-        "cash": round(initial_capital - total_allocated, 2),
-        "n_positions": len(positions),
-    }
+    current_state = build_positions_state(positions, cash, target_date)
 
     positions_path.parent.mkdir(parents=True, exist_ok=True)
     positions_path.write_text(
@@ -328,59 +328,31 @@ def update_registry(status: str, run_at: str) -> None:
     )
 
 
-def main() -> int:
-    import argparse
+def run_single_day(
+    target_date: date,
+    cfg: dict,
+    matematico_model,
+    juez_model,
+    *,
+    refresh_equity_curve: bool = False,
+    generate_xai: bool = False,
+) -> tuple[int, dict | None, dict | None]:
+    """
+    Run the pipeline for one trading day.
 
-    parser = argparse.ArgumentParser(description="Daily paper trading pipeline")
-    parser.add_argument(
-        "--date", type=str, default=None,
-        help="Target date (YYYY-MM-DD). Defaults to yesterday.",
-    )
-    args = parser.parse_args()
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-    )
-
-    if args.date:
-        target_date = date.fromisoformat(args.date)
-    else:
-        target_date = date.today() - timedelta(days=1)
-
-    run_timestamp = datetime.now().isoformat(timespec="seconds")
-
-    # 1. Check if market was open
+    Returns (exit_code, prices, features) — prices/features set on success.
+    """
     if not is_market_open(target_date):
-        logger.info("Market closed on %s — exiting cleanly", target_date)
-        log_entry = {"status": "market_closed", "date": str(target_date)}
-        update_registry("market_closed", run_timestamp)
-
-        logs_dir = ROOT / "logs" / "trades"
-        logs_dir.mkdir(parents=True, exist_ok=True)
-        return 0
+        logger.info("Market closed on %s — skipping", target_date)
+        return 0, None, None
 
     try:
-        from utils.config_loader import load_config
-        from utils.reproducibility import set_all_seeds
+        logger.info("=== Processing %s ===", target_date)
 
-        cfg = load_config(
-            profile_path="profiles/exp1_menos_friccion.yaml",
-            force_reload=True,
-        )
-        set_all_seeds(cfg["general"]["random_seed"])
-
-        # 2. Load models (NO .fit())
-        logger.info("Loading serialized models...")
-        matematico_model, juez_model = load_serialized_models()
-
-        # 3. Download fresh data
         logger.info("Downloading T-1 data for %s...", target_date)
         prices, features, regime_features = download_latest_data(cfg, target_date)
         logger.info("  %d tickers loaded", len(prices))
 
-        # 4. Run inference
         logger.info("Running inference pipeline...")
         decisions = run_inference(
             cfg, matematico_model, juez_model,
@@ -392,7 +364,6 @@ def main() -> int:
         hold_count = sum(1 for d in decisions if d["action"] == "HOLD")
         logger.info("  BUY: %d | HOLD: %d", buy_count, hold_count)
 
-        # 5. Log decisions
         logs_dir = ROOT / "logs" / "trades"
         logs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -402,19 +373,30 @@ def main() -> int:
                 f.write(json.dumps(d, ensure_ascii=False) + "\n")
         logger.info("  Logged to %s", daily_log)
 
-        # 6. Update positions
-        update_positions(decisions, target_date)
+        update_positions(decisions, target_date, cfg)
 
-        # 7. Generate XAI artifacts
-        logger.info("Generating XAI artifacts...")
-        generate_xai_artifacts(matematico_model, features, cfg)
+        from utils.paper_equity import (
+            append_paper_equity_row,
+            compute_portfolio_value,
+            load_positions_state,
+            refresh_dashboard_equity_curve,
+        )
+        pos_state = load_positions_state()
+        portfolio_value = compute_portfolio_value(pos_state, prices, target_date, cfg)
+        append_paper_equity_row(target_date, portfolio_value)
 
-        # 8. Update registry
-        update_registry("success", run_timestamp)
+        if refresh_equity_curve:
+            refresh_dashboard_equity_curve()
+
+        if generate_xai:
+            logger.info("Generating XAI artifacts...")
+            generate_xai_artifacts(matematico_model, features, cfg)
+
         logger.info("Pipeline completed successfully for %s", target_date)
+        return 0, prices, features
 
     except Exception as exc:
-        logger.error("Pipeline failed: %s", exc)
+        logger.error("Pipeline failed for %s: %s", target_date, exc)
         logger.error(traceback.format_exc())
 
         errors_dir = ROOT / "logs" / "errors"
@@ -425,15 +407,122 @@ def main() -> int:
                 "date": str(target_date),
                 "error": str(exc),
                 "traceback": traceback.format_exc(),
-                "timestamp": run_timestamp,
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
             }, indent=2, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
+        return 1, None, None
 
+
+def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Daily paper trading pipeline")
+    parser.add_argument(
+        "--date", type=str, default=None,
+        help="Process a single date (YYYY-MM-DD). Disables automatic catch-up.",
+    )
+    parser.add_argument(
+        "--no-catch-up", action="store_true",
+        help="Only process yesterday instead of filling all gaps since last run.",
+    )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Re-process days that already have a daily log file.",
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    run_timestamp = datetime.now().isoformat(timespec="seconds")
+    yesterday = date.today() - timedelta(days=1)
+
+    from utils.config_loader import load_config
+    from utils.paper_equity import (
+        get_last_processed_date,
+        iter_catch_up_dates,
+        refresh_dashboard_equity_curve,
+    )
+    from utils.reproducibility import set_all_seeds
+
+    cfg = load_config(
+        profile_path="profiles/exp1_menos_friccion.yaml",
+        force_reload=True,
+    )
+    set_all_seeds(cfg["general"]["random_seed"])
+
+    if args.date:
+        dates_to_run = [date.fromisoformat(args.date)]
+    elif args.no_catch_up:
+        dates_to_run = [yesterday]
+    else:
+        last = get_last_processed_date(cfg)
+        dates_to_run = iter_catch_up_dates(cfg, through=yesterday, force=args.force)
+        if last and dates_to_run:
+            logger.info(
+                "Catch-up: last processed %s -> running %d day(s) through %s",
+                last,
+                len(dates_to_run),
+                yesterday,
+            )
+        elif last and not dates_to_run:
+            logger.info("Already up to date (last processed: %s)", last)
+
+    if not dates_to_run:
+        update_registry("up_to_date", run_timestamp)
+        return 0
+
+    if not args.date:
+        dates_to_run = [d for d in dates_to_run if is_market_open(d)]
+        if not dates_to_run:
+            logger.info("No open market days to process in range — exiting cleanly")
+            update_registry("market_closed", run_timestamp)
+            return 0
+
+    try:
+        logger.info("Loading serialized models...")
+        matematico_model, juez_model = load_serialized_models()
+    except FileNotFoundError as exc:
+        logger.error("%s", exc)
         update_registry("error", run_timestamp)
         return 1
 
-    return 0
+    exit_code = 0
+    last_features: dict | None = None
+    processed = 0
+
+    for target_date in dates_to_run:
+        rc, _prices, features = run_single_day(
+            target_date,
+            cfg,
+            matematico_model,
+            juez_model,
+            refresh_equity_curve=False,
+            generate_xai=False,
+        )
+        if rc != 0:
+            exit_code = rc
+            update_registry("error", run_timestamp)
+            break
+        if features is not None:
+            last_features = features
+            processed += 1
+
+    if processed > 0:
+        logger.info("Refreshing dashboard equity curve (%d day(s) processed)...", processed)
+        refresh_dashboard_equity_curve()
+        if last_features is not None:
+            logger.info("Generating XAI artifacts (latest day)...")
+            generate_xai_artifacts(matematico_model, last_features, cfg)
+        update_registry("success", run_timestamp)
+    elif exit_code == 0:
+        update_registry("up_to_date", run_timestamp)
+
+    return exit_code
 
 
 if __name__ == "__main__":
