@@ -9,7 +9,7 @@
     "val_sharpe": 0.861,
     "val_max_drawdown": -0.2963,
     "holdout_start": "2025-01-01",
-    "last_run_at": "2026-08-10T00:17:40",
+    "last_run_at": "2026-09-24T22:56:09",
     "last_run_status": "success",
     "files": {
       "matematico": "models/matematico_v1.joblib",
