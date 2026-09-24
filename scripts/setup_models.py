@@ -48,15 +48,15 @@ def train_and_serialize_models(cfg: dict) -> dict[str, str]:
 
     Returns dict of {model_name: sha256_hash}.
     """
-    from agents.matematico import Matematico
-    from agents.cazador import Cazador
-    from agents.gestor_riesgos import GestorRiesgos
-    from agents.conspiranoico import Conspiranoico
-    from judge.judge_v1 import JuezV1
-    from data.downloader import download_all
-    from data.features import compute_all_features
-    from data.regime import build_regime_features, download_vix
-    from backtester.walk_forward import WalkForwardValidator
+    from mas.agents.matematico import Matematico
+    from mas.agents.cazador import Cazador
+    from mas.agents.gestor_riesgos import GestorRiesgos
+    from mas.agents.conspiranoico import Conspiranoico
+    from mas.judge.judge_v1 import JuezV1
+    from mas.data.downloader import download_all
+    from mas.data.features import compute_all_features
+    from mas.data.regime import build_regime_features, download_vix
+    from mas.backtester.walk_forward import WalkForwardValidator
 
     logger.info("Downloading prices and computing features...")
     prices = download_all(cfg)
@@ -124,12 +124,12 @@ def rebuild_equity_curve(cfg: dict) -> Path:
 
     Sources:
       - Walk-forward: experiments/<canonical>/equity_curve.csv
-      - Holdout: logs/dashboard/holdout_cache/ (if exists)
+      - Holdout: existing logs/dashboard/equity_curve.csv rows (if present)
       - Paper trading: logs/trades/paper.jsonl (if exists)
     """
-    from baselines.buy_and_hold import run as bh_run
-    from baselines.sma_crossover import run as sma_run
-    from data.downloader import download_all
+    from mas.baselines.buy_and_hold import run as bh_run
+    from mas.baselines.sma_crossover import run as sma_run
+    from mas.data.downloader import download_all
 
     initial_capital = cfg["backtester"]["initial_capital"]
     holdout_start = cfg["data"]["holdout_start"]
@@ -270,8 +270,8 @@ def main() -> int:
         datefmt="%H:%M:%S",
     )
 
-    from utils.config_loader import load_config
-    from utils.reproducibility import set_all_seeds
+    from mas.utils.config_loader import load_config
+    from mas.utils.reproducibility import set_all_seeds
 
     cfg = load_config(profile_path=args.profile, force_reload=True)
     set_all_seeds(cfg["general"]["random_seed"])

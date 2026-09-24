@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backtester.metrics import (
+from mas.backtester.metrics import (
     annualized_return,
     calmar_ratio,
     max_drawdown,
@@ -35,7 +35,7 @@ class TestAntiLeakage:
         Este test es conceptual: verifica que el campo 'target_binary' no está
         incluido en FEATURE_COLUMNS del Matemático.
         """
-        from agents.matematico import FEATURE_COLUMNS
+        from mas.agents.matematico import FEATURE_COLUMNS
         assert "target_binary" not in FEATURE_COLUMNS, \
             "target_binary está en FEATURE_COLUMNS — data leakage garantizado"
         assert "target_return_1d" not in FEATURE_COLUMNS, \
@@ -47,7 +47,7 @@ class TestAntiLeakage:
         usa shift(-N) (mirar al futuro) en su cálculo.
         """
         import inspect
-        from data import features
+        from mas.data import features
         source = inspect.getsource(features)
 
         # Buscar shift(-N) en el código fuente (excluir la línea del target)
@@ -144,7 +144,7 @@ class TestExecutionRules:
 
     def test_hysteresis_delays_sell_until_streak(self, tmp_path):
         """Con histéresis=3, no vende al primer día con señal débil."""
-        from backtester.engine import BacktestEngine
+        from mas.backtester.engine import BacktestEngine
 
         cfg = self._minimal_config(
             sell_prob_threshold=0.45,
@@ -173,7 +173,7 @@ class TestExecutionRules:
 
     def test_min_prob_to_buy_blocks_entry(self, tmp_path):
         """No abre si prob < min_prob_to_buy aunque f* sea positivo."""
-        from backtester.engine import BacktestEngine
+        from mas.backtester.engine import BacktestEngine
 
         cfg = self._minimal_config(min_prob_to_buy=0.55)
         cfg["general"]["log_dir"] = str(tmp_path)
@@ -191,7 +191,7 @@ class TestExecutionRules:
 
     def test_defaults_match_legacy_immediate_sell(self, tmp_path):
         """Con defaults, f*<=0 vende el mismo día (comportamiento legacy)."""
-        from backtester.engine import BacktestEngine
+        from mas.backtester.engine import BacktestEngine
 
         cfg = self._minimal_config()
         cfg["general"]["log_dir"] = str(tmp_path)
@@ -236,7 +236,7 @@ class TestWindowClose:
         }
 
     def test_close_all_positions_returns_stats(self, tmp_path):
-        from backtester.engine import BacktestEngine
+        from mas.backtester.engine import BacktestEngine
 
         cfg = self._minimal_config()
         cfg["general"]["log_dir"] = str(tmp_path)
@@ -261,7 +261,7 @@ class TestWindowClose:
         assert stats["portfolio_value_before"] > 0
 
     def test_carry_skips_reset_between_windows(self, tmp_path):
-        from backtester.engine import BacktestEngine
+        from mas.backtester.engine import BacktestEngine
 
         cfg = self._minimal_config(carry_positions_between_windows=True)
         cfg["general"]["log_dir"] = str(tmp_path)
@@ -320,7 +320,7 @@ class TestLongTermRebalancing:
         }
 
     def test_rebalancing_skips_daily_buys(self, tmp_path):
-        from backtester.engine import BacktestEngine
+        from mas.backtester.engine import BacktestEngine
 
         cfg = self._minimal_config(rebalancing_days=3)
         cfg["general"]["log_dir"] = str(tmp_path)
@@ -342,7 +342,7 @@ class TestLongTermRebalancing:
 class TestCazadorRiskScale:
 
     def test_scales_kelly_on_alert_days_only(self):
-        from backtester.walk_forward import _apply_cazador_risk_scale
+        from mas.backtester.walk_forward import _apply_cazador_risk_scale
 
         dates = pd.date_range("2021-01-04", periods=3, freq="B")
         kelly = pd.DataFrame(
@@ -360,7 +360,7 @@ class TestCazadorRiskScale:
         assert (scaled["MSFT"] == kelly["MSFT"]).all()
 
     def test_no_op_when_scale_is_one(self):
-        from backtester.walk_forward import _apply_cazador_risk_scale
+        from mas.backtester.walk_forward import _apply_cazador_risk_scale
 
         dates = pd.date_range("2021-01-04", periods=2, freq="B")
         kelly = pd.DataFrame({"AAPL": [0.10, 0.10]}, index=dates)
@@ -372,8 +372,8 @@ class TestCazadorRiskScale:
 class TestJudgePassThrough:
 
     def test_pass_through_judge_uses_matematico_only(self):
-        from backtester.walk_forward import _combine_agent_signals
-        from judge.judge_v1 import JuezV1
+        from mas.backtester.walk_forward import _combine_agent_signals
+        from mas.judge.judge_v1 import JuezV1
 
         dates = pd.date_range("2021-01-04", periods=3, freq="B")
         mat = {"AAPL": pd.Series([0.7, 0.8, 0.6], index=dates)}
@@ -402,8 +402,8 @@ class TestJudgePassThrough:
 class TestDefensiveRotation:
 
     def test_zeros_equity_and_allocates_defensives_on_severe_day(self):
-        from agents.gestor_riesgos import GestorRiesgos
-        from backtester.walk_forward import _apply_defensive_rotation
+        from mas.agents.gestor_riesgos import GestorRiesgos
+        from mas.backtester.walk_forward import _apply_defensive_rotation
 
         dates = pd.date_range("2021-01-04", periods=2, freq="B")
         kelly = pd.DataFrame(
@@ -490,7 +490,7 @@ class TestMetrics:
 class TestWalkForwardWindows:
 
     def test_generate_holdout_window(self):
-        from backtester.walk_forward import generate_holdout_window, generate_windows
+        from mas.backtester.walk_forward import generate_holdout_window, generate_windows
 
         cfg = {
             "data": {

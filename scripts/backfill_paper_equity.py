@@ -33,8 +33,8 @@ def main() -> int:
     parser.add_argument("--to", dest="to_date", default=None, help="End date YYYY-MM-DD (default: today)")
     args = parser.parse_args()
 
-    from utils.config_loader import load_config
-    from utils.paper_equity import (
+    from mas.utils.config_loader import load_config
+    from mas.utils.paper_equity import (
         PAPER_EQUITY_PATH,
         append_paper_equity_row,
         apply_decisions_with_cash,
@@ -42,7 +42,7 @@ def main() -> int:
         compute_portfolio_value,
         refresh_dashboard_equity_curve,
     )
-    from data.downloader import download_all
+    from mas.data.downloader import download_all
 
     cfg = load_config(profile_path="profiles/exp1_menos_friccion.yaml", force_reload=True)
     trades_dir = ROOT / "logs" / "trades"

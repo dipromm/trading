@@ -79,7 +79,7 @@ def config_toy():
 class TestConspiranoicoFitPredict:
 
     def test_predict_returns_binary_series(self, regime_train, regime_val, config_toy):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_toy)
         c.fit(regime_train)
         veto = c.predict(regime_val)
@@ -87,20 +87,20 @@ class TestConspiranoicoFitPredict:
         assert set(veto.unique()).issubset({0, 1})
 
     def test_predict_index_matches_input(self, regime_train, regime_val, config_toy):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_toy)
         c.fit(regime_train)
         veto = c.predict(regime_val)
         assert veto.index.equals(regime_val.index)
 
     def test_predict_without_fit_raises(self, regime_val, config_toy):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_toy)
         with pytest.raises(RuntimeError, match="no está entrenado"):
             c.predict(regime_val)
 
     def test_fit_requires_min_rows(self, config_toy):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_toy)
         tiny = pd.DataFrame({
             "vol_5d": [0.01] * 5,
@@ -116,7 +116,7 @@ class TestConspiranoicoFitPredict:
 
     def test_nan_rows_in_val_get_veto_zero(self, regime_train, regime_val, config_toy):
         """Filas con NaN en validación reciben veto=0 (conservador)."""
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_toy)
         c.fit(regime_train)
 
@@ -135,7 +135,7 @@ class TestConspiranoicoFitPredict:
         Anti-leakage: el umbral de veto se fija en train y no cambia al predecir
         con datos con diferente distribución.
         """
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_toy)
         c.fit(regime_train)
         threshold_after_fit = c.veto_threshold
@@ -154,7 +154,7 @@ class TestConspiranoicoFitPredict:
         Un período de crisis extrema (VIX alto, vol alta, breadth baja)
         debe activar más vetos que un período tranquilo.
         """
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_toy)
         c.fit(regime_train)
 
@@ -180,7 +180,7 @@ class TestConspiranoicoFitPredict:
         )
 
     def test_anomaly_scores_returns_float_series(self, regime_train, regime_val, config_toy):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_toy)
         c.fit(regime_train)
         scores = c.anomaly_scores(regime_val)
@@ -190,7 +190,7 @@ class TestConspiranoicoFitPredict:
 
     def test_fit_predict_window_helper(self, config_toy):
         """fit_predict_window encapsula correctamente el slice train/val."""
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_toy)
 
         all_dates = pd.date_range("2020-01-02", periods=200, freq="B")
@@ -241,7 +241,7 @@ class TestConspiranoicoSoftVeto:
     def test_predict_risk_scale_returns_float_in_range(
         self, regime_train, regime_val, config_soft,
     ):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_soft)
         c.fit(regime_train)
         scale = c.predict_risk_scale(regime_val)
@@ -253,7 +253,7 @@ class TestConspiranoicoSoftVeto:
     def test_crisis_gets_lower_scale_than_calm(
         self, regime_train, regime_val, config_soft,
     ):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_soft)
         c.fit(regime_train)
 
@@ -275,14 +275,14 @@ class TestConspiranoicoSoftVeto:
         assert scale_crisis.mean() <= scale_calm.mean()
 
     def test_binary_mode_returns_ones(self, regime_train, regime_val, config_toy):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_toy)
         c.fit(regime_train)
         scale = c.predict_risk_scale(regime_val)
         assert (scale == 1.0).all()
 
     def test_moderate_percentile_must_exceed_veto_percentile(self, regime_train, config_soft):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         cfg = config_soft.copy()
         cfg["conspiranoico"] = {**cfg["conspiranoico"]}
         cfg["conspiranoico"]["soft_veto_moderate_percentile"] = 3
@@ -291,7 +291,7 @@ class TestConspiranoicoSoftVeto:
             c.fit(regime_train)
 
     def test_nan_rows_get_scale_one(self, regime_train, regime_val, config_soft):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
         c = Conspiranoico(config_soft)
         c.fit(regime_train)
         val_with_nan = regime_val.copy()
@@ -306,8 +306,8 @@ class TestConspiranoicoWithJuez:
 
     def test_veto_zeros_all_signals(self, regime_train, regime_val, config_toy):
         """Cuando veto=1 en una fecha, JuezV1 debe poner señal 0 para todos los tickers."""
-        from agents.conspiranoico import Conspiranoico
-        from judge.judge_v1 import JuezV1
+        from mas.agents.conspiranoico import Conspiranoico
+        from mas.judge.judge_v1 import JuezV1
 
         c = Conspiranoico(config_toy)
         c.fit(regime_train)
@@ -338,7 +338,7 @@ class TestConspiranoicoWithJuez:
 
     def test_no_veto_passes_signals_through(self, regime_val, config_toy):
         """Cuando veto=0 siempre, JuezV1 en pass-through retorna señales originales."""
-        from judge.judge_v1 import JuezV1
+        from mas.judge.judge_v1 import JuezV1
 
         veto = pd.Series(0, index=regime_val.index, dtype=int)
         judge_cfg = {
@@ -374,12 +374,12 @@ class TestWalkForwardWithConspiranoico:
         """
         import pandas as pd
         import numpy as np
-        from agents.conspiranoico import Conspiranoico
-        from agents.gestor_riesgos import GestorRiesgos
-        from agents.matematico import Matematico
-        from backtester.walk_forward import WalkForwardValidator
-        from data.features import compute_all_features
-        from judge.judge_v1 import JuezV1
+        from mas.agents.conspiranoico import Conspiranoico
+        from mas.agents.gestor_riesgos import GestorRiesgos
+        from mas.agents.matematico import Matematico
+        from mas.backtester.walk_forward import WalkForwardValidator
+        from mas.data.features import compute_all_features
+        from mas.judge.judge_v1 import JuezV1
 
         # Configuración mínima para 2 ventanas walk-forward
         cfg = {
@@ -491,11 +491,11 @@ class TestWalkForwardWithConspiranoico:
 
     def test_missing_regime_features_raises(self):
         """Pasar conspiranoico sin regime_features debe lanzar ValueError."""
-        from agents.conspiranoico import Conspiranoico
-        from agents.gestor_riesgos import GestorRiesgos
-        from agents.matematico import Matematico
-        from backtester.walk_forward import WalkForwardValidator
-        from judge.judge_v1 import JuezV1
+        from mas.agents.conspiranoico import Conspiranoico
+        from mas.agents.gestor_riesgos import GestorRiesgos
+        from mas.agents.matematico import Matematico
+        from mas.backtester.walk_forward import WalkForwardValidator
+        from mas.judge.judge_v1 import JuezV1
 
         cfg_min = {
             "universe": {"tickers_file": "data/universe_2018-01-01.csv"},
@@ -548,14 +548,14 @@ class TestWalkForwardWithConspiranoico:
 
 class TestSummarizeRiskScale:
     def test_empty_series(self):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
 
         stats = Conspiranoico.summarize_risk_scale(pd.Series(dtype=float))
         assert stats["n_days"] == 0
         assert stats["pct_reduced"] == 0.0
 
     def test_tier_counts(self):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
 
         scale = pd.Series([0.25, 0.25, 0.6, 1.0, 1.0])
         stats = Conspiranoico.summarize_risk_scale(scale)
@@ -566,7 +566,7 @@ class TestSummarizeRiskScale:
         assert stats["pct_reduced"] == 60.0
 
     def test_summarize_veto(self):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
 
         veto = pd.Series([0, 1, 1, 0, 0])
         stats = Conspiranoico.summarize_veto(veto)
@@ -634,7 +634,7 @@ def regime_val_crisis(dates_val):
 class TestConspiranoicoHMM:
 
     def test_hmm_fit_predict_soft_scale(self, regime_train_crisis, regime_val_crisis, config_hmm):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
 
         c = Conspiranoico(config_hmm)
         c.fit(regime_train_crisis)
@@ -649,14 +649,14 @@ class TestConspiranoicoHMM:
         assert (scale_train_crisis < 1.0).any()
 
     def test_hmm_crisis_state_has_highest_risk_rank(self, regime_train_crisis, config_hmm):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
 
         c = Conspiranoico(config_hmm)
         c.fit(regime_train_crisis)
         assert c.state_risk_rank[c.crisis_state] == 2
 
     def test_hmm_binary_veto_only_crisis(self, regime_train_crisis, regime_val_crisis, config_hmm):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
 
         config_hmm["conspiranoico"]["veto_mode"] = "binary"
         c = Conspiranoico(config_hmm)
@@ -667,7 +667,7 @@ class TestConspiranoicoHMM:
     def test_hybrid_more_conservative_than_if_alone(
         self, regime_train_crisis, regime_val_crisis, config_toy, config_hmm
     ):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
 
         config_hmm["conspiranoico"]["detector"] = "hybrid"
         config_hmm["conspiranoico"]["soft_veto_moderate_percentile"] = 15
@@ -692,7 +692,7 @@ class TestConspiranoicoHMM:
         assert (hybrid_scale <= if_scale + 1e-9).all()
 
     def test_invalid_detector_raises(self, config_toy):
-        from agents.conspiranoico import Conspiranoico
+        from mas.agents.conspiranoico import Conspiranoico
 
         config_toy["conspiranoico"]["detector"] = "neural_net"
         with pytest.raises(ValueError, match="detector"):

@@ -1,7 +1,0 @@
-{
-  "signal_start": "2026-01-02",
-  "signal_end": "2026-06-18",
-  "n_days": 116,
-  "n_tickers": 45,
-  "kind": "paper_forward"
-}

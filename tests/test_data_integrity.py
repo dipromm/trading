@@ -22,7 +22,7 @@ def load_cached_tickers() -> list[str]:
 
 @pytest.mark.skipif(
     not Path("data/cache").exists(),
-    reason="Caché de datos no disponible. Ejecutar python -m data.downloader primero."
+    reason="Caché de datos no disponible. Ejecutar python -m mas.data.downloader primero."
 )
 class TestDataIntegrity:
 

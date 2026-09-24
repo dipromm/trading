@@ -129,7 +129,7 @@ def generate_shap(static_dir: Path, matematico_model, features: dict, cfg: dict)
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        from agents.matematico import FEATURE_COLUMNS
+        from mas.agents.matematico import FEATURE_COLUMNS
 
         sample_dfs = []
         for ticker, df in list(features.items())[:15]:
@@ -176,8 +176,8 @@ def main() -> int:
     )
 
     import joblib
-    from utils.config_loader import load_config
-    from utils.reproducibility import set_all_seeds
+    from mas.utils.config_loader import load_config
+    from mas.utils.reproducibility import set_all_seeds
 
     cfg = load_config(profile_path="profiles/exp1_menos_friccion.yaml", force_reload=True)
     set_all_seeds(cfg["general"]["random_seed"])
@@ -200,8 +200,8 @@ def main() -> int:
     # --- Download price data and compute features ---
     logger.info("Downloading price data (this may take a moment)...")
     try:
-        from data.downloader import download_all
-        from data.features import compute_all_features
+        from mas.data.downloader import download_all
+        from mas.data.features import compute_all_features
 
         prices = download_all(cfg, force_download=False)
         features = {t: compute_all_features(df, cfg) for t, df in prices.items()}

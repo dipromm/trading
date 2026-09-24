@@ -101,37 +101,6 @@ def _normalize_positions_payload(raw: dict) -> dict:
     }
 
 
-def _positions_from_fallback() -> dict | None:
-    """Build positions payload from paper_decision or engine_snapshot when needed."""
-    paper_decision_path = ROOT / "logs" / "dashboard" / "paper_decision.json"
-    if paper_decision_path.exists():
-        data = json.loads(paper_decision_path.read_text(encoding="utf-8"))
-        cash = float(data.get("cash_eur") or data.get("portfolio_value_eur") or 0)
-        if not data.get("decisions") and cash > 0:
-            return {
-                "positions": [],
-                "cash": cash,
-                "total_value": cash,
-                "as_of": data.get("data_date") or data.get("date"),
-            }
-
-    snapshot_path = ROOT / "logs" / "dashboard" / "paper_cache" / "engine_snapshot.json"
-    if snapshot_path.exists():
-        snap = json.loads(snapshot_path.read_text(encoding="utf-8"))
-        positions_raw = snap.get("positions") or {}
-        if isinstance(positions_raw, dict) and not positions_raw:
-            capital = float(snap.get("capital") or 0)
-            if capital > 0:
-                return {
-                    "positions": [],
-                    "cash": capital,
-                    "total_value": capital,
-                    "as_of": snap.get("last_processed_date"),
-                }
-
-    return None
-
-
 @router.get("/market-close", response_model=MarketCloseResponse)
 def get_market_close(request: Request) -> MarketCloseResponse:
     """Last NYSE market close date and pipeline execution time."""
@@ -188,9 +157,6 @@ def get_positions(request: Request):
     if not positions_path.exists():
         if not _paper_trading_started():
             return StatusMessage(status="not_started")
-        fallback = _positions_from_fallback()
-        if fallback:
-            return fallback
         return PositionsResponse(positions=[], total_value=0, cash=0)
 
     data = json.loads(positions_path.read_text(encoding="utf-8"))
@@ -202,16 +168,7 @@ def get_council_verdict(request: Request):
     if not _paper_trading_started():
         return StatusMessage(status="not_started")
 
-    # 1. Prefer the structured paper_decision.json written by run_daily.py
-    paper_decision_path = ROOT / "logs" / "dashboard" / "paper_decision.json"
-    if paper_decision_path.exists():
-        data = json.loads(paper_decision_path.read_text(encoding="utf-8"))
-        # Normalise key name so the frontend always sees "date"
-        if "data_date" in data and "date" not in data:
-            data["date"] = data.pop("data_date")
-        return data
-
-    # 2. Look for a date-named daily log (YYYY-MM-DD.jsonl)
+    # 1. Look for a date-named daily log (YYYY-MM-DD.jsonl) written by run_daily.py
     trades_dir = ROOT / "logs" / "trades"
     daily_logs = sorted(trades_dir.glob("2*.jsonl"), reverse=True)
     if daily_logs:
@@ -225,7 +182,7 @@ def get_council_verdict(request: Request):
         log_date = latest_log.stem
         return {"date": log_date, "decisions": decisions, "veto_active": False}
 
-    # 3. Group paper.jsonl trades by date and return the most recent day
+    # 2. Group paper.jsonl trades by date and return the most recent day
     paper_log = trades_dir / "paper.jsonl"
     if paper_log.exists():
         by_date: dict[str, list] = {}

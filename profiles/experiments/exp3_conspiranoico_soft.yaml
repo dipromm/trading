@@ -1,0 +1,30 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Experimento 3: Conspiranoico veto suave
+# ──────────────────────────────────────────────────────────────────────────────
+# Objetivo: en lugar de veto binario (no comprar), escalar Kelly según
+# anomaly score para mantener exposición parcial en crisis.
+#
+# Tiers:
+#   score < p5  → Kelly × 0.25 (crisis severa)
+#   p5–p15      → Kelly × 0.60 (anomalía moderada)
+#   ≥ p15       → Kelly × 1.00 (régimen normal)
+#
+# Comparar contra:
+#   experiments/fase6_mat_cazador_conspiranoico_20260619_161511
+#
+# Uso:
+#   python run.py --cazador --conspiranoico --profile profiles/experiments/exp3_conspiranoico_soft.yaml
+#
+# Variante Exp1+Exp3 (menos fricción + veto suave):
+#   python run.py --cazador --conspiranoico --profile profiles/experiments/exp1_exp3_combined.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+profile:
+  name: "exp3_conspiranoico_soft"
+  description: "Veto suave: escala Kelly por anomaly score en lugar de veto binario"
+
+conspiranoico:
+  veto_mode: "soft"
+  soft_veto_scale_severe: 0.25
+  soft_veto_scale_moderate: 0.6
+  soft_veto_moderate_percentile: 15

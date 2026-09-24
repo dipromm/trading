@@ -81,12 +81,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    from utils.config_loader import load_config
+    from mas.utils.config_loader import load_config
     cfg = load_config()
 
     # -- 1. Cargar datos OHLCV --
     logger.info("Cargando datos OHLCV...")
-    from data.downloader import download_all
+    from mas.data.downloader import download_all
     prices = download_all(cfg)
     if not prices:
         logger.error("No hay datos disponibles. Ejecuta run.py primero.")
@@ -95,7 +95,7 @@ def main() -> int:
 
     # -- 2. Descargar VIX + features de régimen --
     logger.info("Descargando VIX y calculando features de régimen...")
-    from data.regime import build_regime_features, download_vix
+    from mas.data.regime import build_regime_features, download_vix
     vix = download_vix(cfg, force_download=args.force_download)
     regime_features = build_regime_features(prices, vix, cfg)
     logger.info(
@@ -107,7 +107,7 @@ def main() -> int:
 
     # -- 3. Entrenar Conspiranoico en período de train --
     logger.info("Entrenando Conspiranoico [%s -> %s]...", "2018-01-01", args.train_end)
-    from agents.conspiranoico import Conspiranoico
+    from mas.agents.conspiranoico import Conspiranoico
     conspiranoico = Conspiranoico(cfg)
 
     train_data = regime_features.loc["2018-01-01":args.train_end]

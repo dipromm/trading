@@ -6,9 +6,10 @@ Ejecuta el pipeline completo:
 
 Uso:
     python run.py                          # Run con Matematico solo (Fase 3)
-    python run.py --analista               # Run con Matematico + Analista (Fase 4)
-    python run.py --cazador                # Run con Matematico + Cazador (Fase 5)
-    python run.py --analista --cazador     # Run completo Fase 5
+    python run.py --analista               # + El Analista (FinBERT, Fase 4)
+    python run.py --cazador                # + El Cazador (SEC Form 4, Fase 5)
+    python run.py --cazador --conspiranoico --profile profiles/exp1_menos_friccion.yaml
+                                           # Configuraci?n can?nica (Fase 6)
     python run.py --force-download         # Re-descarga todos los datos
     python run.py --no-baselines           # Saltar comparativa de baselines
     python run.py --debug                  # Logging verbose
@@ -159,6 +160,33 @@ def _print_phase4_comparison(
     print()
 
 
+def _flatten(d: dict, prefix: str = "") -> dict:
+    """Aplana un dict anidado a claves 'a.b.c' -> valor."""
+    out: dict = {}
+    for k, v in d.items():
+        key = f"{prefix}.{k}" if prefix else str(k)
+        if isinstance(v, dict):
+            out.update(_flatten(v, key))
+        else:
+            out[key] = v
+    return out
+
+
+def _log_profile_overrides(logger: logging.Logger, profile_path: str) -> None:
+    """Loguea las claves que el perfil YAML sobreescribe respecto al config base."""
+    import yaml
+
+    with open(profile_path, "r", encoding="utf-8") as f:
+        overrides = yaml.safe_load(f) or {}
+    overrides.pop("profile", None)
+    flat = _flatten(overrides)
+    if not flat:
+        return
+    logger.info("  Overrides del perfil (%d):", len(flat))
+    for key, value in sorted(flat.items()):
+        logger.info("    %s = %s", key, value)
+
+
 # -- Persistencia de experimento -----------------------------------------------
 
 def _save_experiment(
@@ -222,7 +250,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--cazador", action="store_true",
-        help="Incluir El Cazador (insiders SEC Form 4). Descarga de OpenInsider.",
+        help="Incluir El Cazador (insiders SEC EDGAR Form 4). Descarga de SEC EDGAR (requiere SEC_USER_AGENT).",
     )
     parser.add_argument(
         "--conspiranoico", action="store_true",
@@ -250,12 +278,19 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    # Credenciales opcionales (ALPACA_*, SEC_USER_AGENT) desde .env
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     _setup_logging(args.debug)
     logger = logging.getLogger(__name__)
 
     # -- 1. Config y reproducibilidad --
-    from utils.config_loader import load_config
-    from utils.reproducibility import set_all_seeds
+    from mas.utils.config_loader import load_config
+    from mas.utils.reproducibility import set_all_seeds
 
     cfg = load_config(profile_path=args.profile, force_reload=True)
     seed = cfg["general"]["random_seed"]
@@ -279,263 +314,11 @@ def main() -> int:
         "SI" if use_conspiranoico else "NO",
         profile_name or "base",
     )
-    if profile_name == "long_term":
-        p_cfg = cfg.get("profile", {})
-        bt_cfg = cfg.get("backtester", {})
-        rm_cfg = cfg.get("risk_manager", {})
-        logger.info(
-            "  Long-term: rebalanceo cada %d días | stop ATR ×%.1f | max_pos=%.0f%%",
-            bt_cfg.get("rebalancing_days", p_cfg.get("rebalancing_days", 21)),
-            rm_cfg.get("stop_loss_atr_multiplier", 2.0),
-            rm_cfg.get("max_position_pct", 0.15) * 100,
-        )
-    elif profile_name == "exp1_menos_friccion":
-        logger.info(
-            "  Exp1: min_kelly=%.3f | min_prob_buy=%.2f | sell_prob=%.2f | histéresis=%d días",
-            cfg["risk_manager"]["min_kelly_threshold"],
-            cfg["backtester"].get("min_prob_to_buy", 0),
-            cfg["backtester"].get("sell_prob_threshold", 0),
-            cfg["backtester"].get("sell_hysteresis_days", 1),
-        )
-    elif profile_name in ("exp2_stop_loss_holgado", "exp1_exp2_combined"):
-        logger.info(
-            "  Exp2: stop_loss_atr_multiplier=%.1f",
-            cfg["risk_manager"]["stop_loss_atr_multiplier"],
-        )
-        if profile_name == "exp1_exp2_combined":
-            logger.info(
-                "  Exp1: min_kelly=%.3f | min_prob_buy=%.2f | sell_prob=%.2f | histéresis=%d días",
-                cfg["risk_manager"]["min_kelly_threshold"],
-                cfg["backtester"].get("min_prob_to_buy", 0),
-                cfg["backtester"].get("sell_prob_threshold", 0),
-                cfg["backtester"].get("sell_hysteresis_days", 1),
-            )
-    elif profile_name in (
-        "exp11_conspiranoico_hmm",
-        "exp1_exp3_hmm_combined",
-        "exp1_exp3_hmm_hybrid",
-        "exp1_hmm_combined",
-    ):
-        c_cfg = cfg["conspiranoico"]
-        hmm_cfg = c_cfg.get("hmm", {})
-        logger.info(
-            "  Exp11 HMM: detector=%s | veto_mode=%s | estados=%d | cov=%s",
-            c_cfg.get("detector", "isolation_forest"),
-            c_cfg.get("veto_mode", "binary"),
-            hmm_cfg.get("n_states", 3),
-            hmm_cfg.get("covariance_type", "diag"),
-        )
-        if c_cfg.get("veto_mode") == "soft":
-            logger.info(
-                "  Exp3: severo=×%.2f | moderado=×%.2f",
-                c_cfg.get("soft_veto_scale_severe", 0.25),
-                c_cfg.get("soft_veto_scale_moderate", 0.6),
-            )
-        if profile_name in ("exp1_exp3_hmm_combined", "exp1_exp3_hmm_hybrid", "exp1_hmm_combined"):
-            logger.info(
-                "  Exp1: min_kelly=%.3f | min_prob_buy=%.2f | sell_prob=%.2f | histéresis=%d días",
-                cfg["risk_manager"]["min_kelly_threshold"],
-                cfg["backtester"].get("min_prob_to_buy", 0),
-                cfg["backtester"].get("sell_prob_threshold", 0),
-                cfg["backtester"].get("sell_hysteresis_days", 1),
-            )
-    elif profile_name in ("exp3_conspiranoico_soft", "exp1_exp3_combined"):
-        c_cfg = cfg["conspiranoico"]
-        logger.info(
-            "  Exp3: veto_mode=%s | severo=×%.2f | moderado=×%.2f (p%d)",
-            c_cfg.get("veto_mode", "binary"),
-            c_cfg.get("soft_veto_scale_severe", 0.25),
-            c_cfg.get("soft_veto_scale_moderate", 0.6),
-            c_cfg.get("soft_veto_moderate_percentile", 15),
-        )
-        if profile_name == "exp1_exp3_combined":
-            logger.info(
-                "  Exp1: min_kelly=%.3f | min_prob_buy=%.2f | sell_prob=%.2f | histéresis=%d días",
-                cfg["risk_manager"]["min_kelly_threshold"],
-                cfg["backtester"].get("min_prob_to_buy", 0),
-                cfg["backtester"].get("sell_prob_threshold", 0),
-                cfg["backtester"].get("sell_hysteresis_days", 1),
-            )
-    elif profile_name in ("exp4_cazador_modulador", "exp1_exp3_exp4_combined"):
-        c_cfg = cfg.get("cazador", {})
-        logger.info(
-            "  Exp4: mode=%s | alert_kelly_scale=×%.2f",
-            c_cfg.get("mode", "judge"),
-            c_cfg.get("alert_kelly_scale", 0.5),
-        )
-        if profile_name == "exp1_exp3_exp4_combined":
-            cc = cfg["conspiranoico"]
-            logger.info(
-                "  Exp3: veto_mode=%s | severo=×%.2f | moderado=×%.2f (p%d)",
-                cc.get("veto_mode", "binary"),
-                cc.get("soft_veto_scale_severe", 0.25),
-                cc.get("soft_veto_scale_moderate", 0.6),
-                cc.get("soft_veto_moderate_percentile", 15),
-            )
-            logger.info(
-                "  Exp1: min_kelly=%.3f | min_prob_buy=%.2f | sell_prob=%.2f | histéresis=%d días",
-                cfg["risk_manager"]["min_kelly_threshold"],
-                cfg["backtester"].get("min_prob_to_buy", 0),
-                cfg["backtester"].get("sell_prob_threshold", 0),
-                cfg["backtester"].get("sell_hysteresis_days", 1),
-            )
-    elif profile_name in ("exp5_mas_exposicion_normal", "exp1_exp3_exp5_combined"):
-        kb = cfg["risk_manager"].get("kelly_boost", {})
-        logger.info(
-            "  Exp5: boost=%s | rho=%.2f | VIX < p%.0f | régimen normal=%s",
-            "ON" if kb.get("enabled") else "OFF",
-            kb.get("fraction", 0.6),
-            kb.get("vix_percentile", 70),
-            kb.get("require_normal_regime", True),
-        )
-        if profile_name == "exp1_exp3_exp5_combined":
-            cc = cfg["conspiranoico"]
-            logger.info(
-                "  Exp3: veto_mode=%s | severo=×%.2f | moderado=×%.2f (p%d)",
-                cc.get("veto_mode", "binary"),
-                cc.get("soft_veto_scale_severe", 0.25),
-                cc.get("soft_veto_scale_moderate", 0.6),
-                cc.get("soft_veto_moderate_percentile", 15),
-            )
-            logger.info(
-                "  Exp1: min_kelly=%.3f | min_prob_buy=%.2f | sell_prob=%.2f | histéresis=%d días",
-                cfg["risk_manager"]["min_kelly_threshold"],
-                cfg["backtester"].get("min_prob_to_buy", 0),
-                cfg["backtester"].get("sell_prob_threshold", 0),
-                cfg["backtester"].get("sell_hysteresis_days", 1),
-            )
-
-    elif profile_name in ("exp6_juez_passthrough", "exp1_exp3_exp6_combined"):
-        logger.info(
-            "  Exp6: judge mode=%s",
-            cfg.get("judge_v1", {}).get("mode", "meta_model"),
-        )
-        if profile_name == "exp1_exp3_exp6_combined":
-            cc = cfg["conspiranoico"]
-            logger.info(
-                "  Exp3: veto_mode=%s | severo=×%.2f | moderado=×%.2f (p%d)",
-                cc.get("veto_mode", "binary"),
-                cc.get("soft_veto_scale_severe", 0.25),
-                cc.get("soft_veto_scale_moderate", 0.6),
-                cc.get("soft_veto_moderate_percentile", 15),
-            )
-            logger.info(
-                "  Exp1: min_kelly=%.3f | min_prob_buy=%.2f | sell_prob=%.2f | histéresis=%d días",
-                cfg["risk_manager"]["min_kelly_threshold"],
-                cfg["backtester"].get("min_prob_to_buy", 0),
-                cfg["backtester"].get("sell_prob_threshold", 0),
-                cfg["backtester"].get("sell_hysteresis_days", 1),
-            )
-
-    elif profile_name in (
-        "exp9_juez_passthrough",
-        "exp1_exp3_exp8_exp9_combined",
-    ):
-        logger.info(
-            "  Exp9: judge mode=%s (pass-through = solo Matemático, sin meta-modelo mat+cazador)",
-            cfg.get("judge_v1", {}).get("mode", "meta_model"),
-        )
-        if profile_name == "exp1_exp3_exp8_exp9_combined":
-            cc = cfg["conspiranoico"]
-            logger.info(
-                "  Exp8: veto_threshold_percentile=p%d",
-                cc.get("veto_threshold_percentile", 5),
-            )
-            logger.info(
-                "  Exp3: veto_mode=%s | severo=×%.2f | moderado=×%.2f (p%d)",
-                cc.get("veto_mode", "binary"),
-                cc.get("soft_veto_scale_severe", 0.25),
-                cc.get("soft_veto_scale_moderate", 0.6),
-                cc.get("soft_veto_moderate_percentile", 15),
-            )
-            logger.info(
-                "  Exp1: min_kelly=%.3f | min_prob_buy=%.2f | sell_prob=%.2f | histéresis=%d días",
-                cfg["risk_manager"]["min_kelly_threshold"],
-                cfg["backtester"].get("min_prob_to_buy", 0),
-                cfg["backtester"].get("sell_prob_threshold", 0),
-                cfg["backtester"].get("sell_hysteresis_days", 1),
-            )
-
-    elif profile_name in ("exp7_rotacion_defensivos", "exp1_exp3_exp7_combined"):
-        dr = cfg["conspiranoico"].get("defensive_rotation", {})
-        logger.info(
-            "  Exp7: rotation=%s | alloc=%.0f%% | tickers=%s | trigger_scale=%.2f",
-            "ON" if dr.get("enabled") else "OFF",
-            dr.get("total_allocation", 0.30) * 100,
-            dr.get("tickers", ["TLT", "IEF", "GLD"]),
-            dr.get("trigger_scale", 0.25),
-        )
-        if profile_name == "exp1_exp3_exp7_combined":
-            cc = cfg["conspiranoico"]
-            logger.info(
-                "  Exp3: veto_mode=%s | severo=×%.2f | moderado=×%.2f (p%d)",
-                cc.get("veto_mode", "binary"),
-                cc.get("soft_veto_scale_severe", 0.25),
-                cc.get("soft_veto_scale_moderate", 0.6),
-                cc.get("soft_veto_moderate_percentile", 15),
-            )
-            logger.info(
-                "  Exp1: min_kelly=%.3f | min_prob_buy=%.2f | sell_prob=%.2f | histéresis=%d días",
-                cfg["risk_manager"]["min_kelly_threshold"],
-                cfg["backtester"].get("min_prob_to_buy", 0),
-                cfg["backtester"].get("sell_prob_threshold", 0),
-                cfg["backtester"].get("sell_hysteresis_days", 1),
-            )
-
-    elif profile_name in ("exp8_veto_tuned", "exp1_exp3_exp8_combined"):
-        cc = cfg["conspiranoico"]
-        logger.info(
-            "  Exp8: veto_threshold_percentile=p%d (tuning por tasa WF)",
-            cc.get("veto_threshold_percentile", 5),
-        )
-        if profile_name == "exp1_exp3_exp8_combined":
-            logger.info(
-                "  Exp3: veto_mode=%s | severo=×%.2f | moderado=×%.2f (p%d)",
-                cc.get("veto_mode", "binary"),
-                cc.get("soft_veto_scale_severe", 0.25),
-                cc.get("soft_veto_scale_moderate", 0.6),
-                cc.get("soft_veto_moderate_percentile", 15),
-            )
-            logger.info(
-                "  Exp1: min_kelly=%.3f | min_prob_buy=%.2f | sell_prob=%.2f | histéresis=%d días",
-                cfg["risk_manager"]["min_kelly_threshold"],
-                cfg["backtester"].get("min_prob_to_buy", 0),
-                cfg["backtester"].get("sell_prob_threshold", 0),
-                cfg["backtester"].get("sell_hysteresis_days", 1),
-            )
-
-    elif profile_name in (
-        "exp10_carry_positions",
-        "exp1_exp3_exp8_exp10_combined",
-    ):
-        carry = cfg["backtester"].get("carry_positions_between_windows", False)
-        logger.info(
-            "  Exp10: carry_positions_between_windows=%s",
-            "ON" if carry else "OFF",
-        )
-        if profile_name == "exp1_exp3_exp8_exp10_combined":
-            cc = cfg["conspiranoico"]
-            logger.info(
-                "  Exp8: veto_threshold_percentile=p%d",
-                cc.get("veto_threshold_percentile", 5),
-            )
-            logger.info(
-                "  Exp3: veto_mode=%s | severo=×%.2f | moderado=×%.2f (p%d)",
-                cc.get("veto_mode", "binary"),
-                cc.get("soft_veto_scale_severe", 0.25),
-                cc.get("soft_veto_scale_moderate", 0.6),
-                cc.get("soft_veto_moderate_percentile", 15),
-            )
-            logger.info(
-                "  Exp1: min_kelly=%.3f | min_prob_buy=%.2f | sell_prob=%.2f | histéresis=%d días",
-                cfg["risk_manager"]["min_kelly_threshold"],
-                cfg["backtester"].get("min_prob_to_buy", 0),
-                cfg["backtester"].get("sell_prob_threshold", 0),
-                cfg["backtester"].get("sell_hysteresis_days", 1),
-            )
+    if args.profile:
+        _log_profile_overrides(logger, args.profile)
 
     # -- 2. Datos OHLCV --
-    from data.downloader import download_all, load_tickers
+    from mas.data.downloader import download_all, load_tickers
 
     tickers = load_tickers(cfg)
     logger.info("Paso 1/5: Cargando datos OHLCV (force=%s)...", args.force_download)
@@ -548,7 +331,7 @@ def main() -> int:
     logger.info("  %d tickers con datos OK", len(prices))
 
     # -- 3. Features tecnicas --
-    from data.features import compute_all_features, feature_windows_from_config
+    from mas.data.features import compute_all_features, feature_windows_from_config
 
     logger.info("Paso 2/5: Calculando features tecnicas...")
     feature_windows = feature_windows_from_config(cfg)
@@ -564,8 +347,8 @@ def main() -> int:
     if use_analista:
         logger.info("Paso 3/5: Cargando noticias y precomputando sentimiento...")
 
-        from agents.analista import Analista
-        from data.news import download_all_news, get_trading_dates, load_cached_news
+        from mas.agents.analista import Analista
+        from mas.data.news import download_all_news, get_trading_dates, load_cached_news
 
         news_data = download_all_news(
             tickers=list(prices.keys()),
@@ -610,8 +393,8 @@ def main() -> int:
     # -- 3c. Insiders (si --cazador) --
     cazador_agent = None
     if use_cazador:
-        logger.info("Paso 3c/5: Descargando datos de insiders (OpenInsider)...")
-        from agents.cazador import Cazador
+        logger.info("Paso 3c/5: Descargando datos de insiders (SEC EDGAR Form 4)...")
+        from mas.agents.cazador import Cazador
 
         cazador_agent = Cazador(cfg)
         try:
@@ -633,8 +416,8 @@ def main() -> int:
     conspiranoico_agent = None
     if use_conspiranoico:
         logger.info("Paso 3d/5: Descargando VIX y calculando features de régimen...")
-        from agents.conspiranoico import Conspiranoico
-        from data.regime import build_regime_features, download_vix
+        from mas.agents.conspiranoico import Conspiranoico
+        from mas.data.regime import build_regime_features, download_vix
 
         try:
             vix = download_vix(cfg, force_download=args.force_download)
@@ -655,10 +438,10 @@ def main() -> int:
         logger.info("Paso 3d/5: Régimen omitido (sin --conspiranoico)")
 
     # -- 4. Walk-forward --
-    from agents.gestor_riesgos import GestorRiesgos
-    from agents.matematico import Matematico
-    from backtester.walk_forward import WalkForwardValidator
-    from judge.judge_v1 import JuezV1
+    from mas.agents.gestor_riesgos import GestorRiesgos
+    from mas.agents.matematico import Matematico
+    from mas.backtester.walk_forward import WalkForwardValidator
+    from mas.judge.judge_v1 import JuezV1
 
     matematico = Matematico(cfg)
     gestor = GestorRiesgos.from_config(cfg)
@@ -727,8 +510,8 @@ def main() -> int:
     sma_metrics: dict | None = None
 
     if not args.no_baselines:
-        from backtester.metrics import summary
-        from baselines import buy_and_hold, sma_crossover
+        from mas.backtester.metrics import summary
+        from mas.baselines import buy_and_hold, sma_crossover
 
         oos_start = str(results["daily_returns"].index[0].date())
         oos_end = str(results["daily_returns"].index[-1].date())

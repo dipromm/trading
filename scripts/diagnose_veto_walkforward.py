@@ -11,7 +11,7 @@ No ejecuta backtest ni optimiza Sharpe de 2022 (anti-overfitting).
 
 Uso:
     python scripts/diagnose_veto_walkforward.py
-    python scripts/diagnose_veto_walkforward.py --profile profiles/exp1_exp3_combined.yaml
+    python scripts/diagnose_veto_walkforward.py --profile profiles/experiments/exp1_exp3_combined.yaml
     python scripts/diagnose_veto_walkforward.py --sweep 3,5,7,10,12
     python scripts/diagnose_veto_walkforward.py --sweep 3,5,7,10 --output reports/veto_wf.csv
 """
@@ -79,8 +79,8 @@ def run_walkforward_veto_diagnosis(
     regime_features: pd.DataFrame,
     veto_percentile: int,
 ) -> list[dict]:
-    from agents.conspiranoico import Conspiranoico
-    from backtester.walk_forward import generate_windows
+    from mas.agents.conspiranoico import Conspiranoico
+    from mas.backtester.walk_forward import generate_windows
 
     cfg_run = copy.deepcopy(cfg)
     cfg_run["conspiranoico"]["veto_threshold_percentile"] = veto_percentile
@@ -127,7 +127,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--profile", default=None,
-        help="YAML de perfil (ej. profiles/exp1_exp3_combined.yaml)",
+        help="YAML de perfil (ej. profiles/experiments/exp1_exp3_combined.yaml)",
     )
     parser.add_argument(
         "--sweep", default=None,
@@ -140,17 +140,17 @@ def main() -> int:
     parser.add_argument("--force-download", action="store_true")
     args = parser.parse_args()
 
-    from utils.config_loader import load_config
+    from mas.utils.config_loader import load_config
     cfg = load_config(profile_path=args.profile, force_reload=True)
 
     logger.info("Cargando datos OHLCV...")
-    from data.downloader import download_all
+    from mas.data.downloader import download_all
     prices = download_all(cfg, force_download=args.force_download)
     if not prices:
         logger.error("Sin datos OHLCV.")
         return 1
 
-    from data.regime import build_regime_features, download_vix
+    from mas.data.regime import build_regime_features, download_vix
     vix = download_vix(cfg, force_download=args.force_download)
     regime_features = build_regime_features(prices, vix, cfg)
 

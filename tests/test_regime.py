@@ -83,14 +83,14 @@ def config_toy(tmp_path):
 class TestBuildReturnsMatrix:
 
     def test_returns_shape(self, prices_toy, dates):
-        from data.regime import build_returns_matrix
+        from mas.data.regime import build_returns_matrix
         returns = build_returns_matrix(prices_toy)
         assert set(returns.columns) == {"AAPL", "MSFT"}
         assert len(returns) == len(dates)
 
     def test_first_row_is_nan(self, prices_toy):
         """El retorno del primer día siempre es NaN (no hay T-1)."""
-        from data.regime import build_returns_matrix
+        from mas.data.regime import build_returns_matrix
         returns = build_returns_matrix(prices_toy)
         assert returns.iloc[0].isna().all()
 
@@ -98,7 +98,7 @@ class TestBuildReturnsMatrix:
         """
         Anti-leakage: insertar un shock en T no debe modificar los retornos de T-1.
         """
-        from data.regime import build_returns_matrix
+        from mas.data.regime import build_returns_matrix
 
         returns_before = build_returns_matrix(prices_toy)
 
@@ -121,7 +121,7 @@ class TestBuildReturnsMatrix:
 class TestMarketBreadth:
 
     def test_all_positive(self, dates):
-        from data.regime import compute_market_breadth
+        from mas.data.regime import compute_market_breadth
         n = 50
         dates_slice = dates[:n]
         returns = pd.DataFrame({
@@ -134,7 +134,7 @@ class TestMarketBreadth:
         assert np.allclose(valid, 1.0)
 
     def test_all_negative(self, dates):
-        from data.regime import compute_market_breadth
+        from mas.data.regime import compute_market_breadth
         n = 50
         dates_slice = dates[:n]
         returns = pd.DataFrame({
@@ -147,7 +147,7 @@ class TestMarketBreadth:
         assert np.allclose(valid, 0.0)
 
     def test_half_positive(self, dates):
-        from data.regime import compute_market_breadth
+        from mas.data.regime import compute_market_breadth
         n = 50
         dates_slice = dates[:n]
         returns = pd.DataFrame({
@@ -159,7 +159,7 @@ class TestMarketBreadth:
         assert np.allclose(valid, 0.5)
 
     def test_range_is_zero_to_one(self, prices_toy, dates):
-        from data.regime import build_returns_matrix, compute_market_breadth
+        from mas.data.regime import build_returns_matrix, compute_market_breadth
         returns = build_returns_matrix(prices_toy)
         breadth = compute_market_breadth(returns)
         valid = breadth.dropna()
@@ -173,7 +173,7 @@ class TestRollingCorrelation:
 
     def test_perfectly_correlated(self, dates):
         """Dos series idénticas → correlación = 1.0."""
-        from data.regime import compute_rolling_correlation
+        from mas.data.regime import compute_rolling_correlation
         n = 60
         series = pd.Series(np.random.randn(n), index=dates[:n])
         returns = pd.DataFrame({"A": series, "B": series})
@@ -184,7 +184,7 @@ class TestRollingCorrelation:
 
     def test_perfectly_anticorrelated(self, dates):
         """Dos series opuestas → correlación = -1.0."""
-        from data.regime import compute_rolling_correlation
+        from mas.data.regime import compute_rolling_correlation
         n = 60
         series = pd.Series(np.random.randn(n), index=dates[:n])
         returns = pd.DataFrame({"A": series, "B": -series})
@@ -195,7 +195,7 @@ class TestRollingCorrelation:
 
     def test_single_ticker_returns_nan(self, dates):
         """Con un solo ticker no se puede calcular correlación pairwise."""
-        from data.regime import compute_rolling_correlation
+        from mas.data.regime import compute_rolling_correlation
         n = 60
         returns = pd.DataFrame({"A": np.random.randn(n)}, index=dates[:n])
         corr = compute_rolling_correlation(returns, window=20)
@@ -207,7 +207,7 @@ class TestRollingCorrelation:
 class TestBuildRegimeFeatures:
 
     def test_columns_present(self, prices_toy, vix_toy, config_toy):
-        from data.regime import build_regime_features
+        from mas.data.regime import build_regime_features
         features = build_regime_features(prices_toy, vix_toy, config_toy)
         expected_cols = {
             "vol_5d", "vol_20d", "vol_60d",
@@ -225,7 +225,7 @@ class TestBuildRegimeFeatures:
         Anti-leakage: añadir un día extra con precios inflados no debe
         modificar las features de los días anteriores.
         """
-        from data.regime import build_regime_features
+        from mas.data.regime import build_regime_features
         import copy
 
         features_orig = build_regime_features(prices_toy, vix_toy, config_toy)
@@ -254,7 +254,7 @@ class TestBuildRegimeFeatures:
 
     def test_vix_alignment(self, prices_toy, config_toy, dates):
         """VIX con fechas distintas se alinea correctamente por forward-fill."""
-        from data.regime import build_regime_features
+        from mas.data.regime import build_regime_features
 
         # VIX con algunas fechas faltantes
         vix_sparse = pd.Series(
@@ -267,7 +267,7 @@ class TestBuildRegimeFeatures:
 
     def test_output_index_matches_returns(self, prices_toy, vix_toy, config_toy):
         """El índice de las features debe coincidir con el índice de los precios."""
-        from data.regime import build_regime_features, build_returns_matrix
+        from mas.data.regime import build_regime_features, build_returns_matrix
         returns = build_returns_matrix(prices_toy)
         features = build_regime_features(prices_toy, vix_toy, config_toy)
         assert features.index.equals(returns.index)
@@ -278,7 +278,7 @@ class TestBuildRegimeFeatures:
         (método pandas real) fuera de comentarios o docstrings.
         """
         import inspect
-        from data import regime
+        from mas.data import regime
         source = inspect.getsource(regime)
         lines = source.split("\n")
         # Buscar el patrón de llamada de método real: ".shift(-" con punto delante
@@ -295,7 +295,7 @@ class TestBuildRegimeFeatures:
 class TestKellyBoost:
 
     def test_boost_on_low_vix_normal_regime(self, dates):
-        from data.regime import compute_kelly_fraction_by_date
+        from mas.data.regime import compute_kelly_fraction_by_date
 
         train = pd.DataFrame({"vix": np.linspace(10, 30, 50)}, index=dates[:50])
         val = pd.DataFrame({"vix": [12.0, 25.0, 15.0]}, index=dates[50:53])
@@ -320,7 +320,7 @@ class TestKellyBoost:
         assert kelly.iloc[2] == 0.6
 
     def test_no_boost_when_veto_active(self, dates):
-        from data.regime import compute_kelly_fraction_by_date
+        from mas.data.regime import compute_kelly_fraction_by_date
 
         train = pd.DataFrame({"vix": [15.0] * 20}, index=dates[:20])
         val = pd.DataFrame({"vix": [14.0]}, index=dates[20:21])
@@ -339,7 +339,7 @@ class TestKellyBoost:
         assert kelly.iloc[0] == 0.5
 
     def test_no_boost_when_risk_scale_reduced(self, dates):
-        from data.regime import compute_kelly_fraction_by_date
+        from mas.data.regime import compute_kelly_fraction_by_date
 
         train = pd.DataFrame({"vix": [15.0] * 20}, index=dates[:20])
         val = pd.DataFrame({"vix": [14.0]}, index=dates[20:21])
@@ -361,18 +361,20 @@ class TestKellyBoost:
 class TestDownloadVix:
 
     def test_uses_cache_without_network(self, config_toy, tmp_path):
-        from data.regime import download_vix
+        from mas.data.regime import download_vix
 
         cache_file = tmp_path / "vix_index.parquet"
         dates = pd.date_range("2021-01-04", periods=5, freq="B")
         pd.DataFrame({"Close": [18.0, 19.0, 20.0, 21.0, 22.0]}, index=dates).to_parquet(cache_file)
 
+        # La caché cubre hasta end_date -> no debe intentar ampliarla por red.
+        config_toy["data"]["end_date"] = dates[-1].strftime("%Y-%m-%d")
         series = download_vix(config_toy)
         assert len(series) == 5
         assert series.iloc[-1] == 22.0
 
     def test_history_fallback_when_download_empty(self, config_toy, monkeypatch):
-        from data.regime import download_vix
+        from mas.data.regime import download_vix
 
         dates = pd.date_range("2021-01-04", periods=3, freq="B")
         ohlcv = pd.DataFrame(
@@ -402,7 +404,7 @@ class TestDownloadVix:
         assert (Path(config_toy["data"]["cache_dir"]) / "vix_index.parquet").exists()
 
     def test_stale_cache_when_all_downloads_fail(self, config_toy, monkeypatch):
-        from data.regime import download_vix
+        from mas.data.regime import download_vix
 
         cache_file = Path(config_toy["data"]["cache_dir"]) / "vix_index.parquet"
         dates = pd.date_range("2021-01-04", periods=2, freq="B")

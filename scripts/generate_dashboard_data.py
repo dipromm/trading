@@ -25,7 +25,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from utils.config_loader import load_config
+from mas.utils.config_loader import load_config
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(name)s | %(message)s")
 logger = logging.getLogger(__name__)
@@ -81,15 +81,15 @@ def _try_load_baselines(
     if not cache_dir.exists() or not any(cache_dir.glob("*.parquet")):
         logger.warning(
             "No cached price data found in %s. Baselines will be null. "
-            "Run 'python -m data.downloader' first to enable baseline curves.",
+            "Run 'python -m mas.data.downloader' first to enable baseline curves.",
             cache_dir,
         )
         return None, None
 
     try:
-        from data.downloader import load_tickers, download_ticker
-        from baselines.buy_and_hold import run as run_bh
-        from baselines.sma_crossover import run as run_sma
+        from mas.data.downloader import load_tickers, download_ticker
+        from mas.baselines.buy_and_hold import run as run_bh
+        from mas.baselines.sma_crossover import run as run_sma
 
         tickers = load_tickers(config)
         start = str(dates.min().date())

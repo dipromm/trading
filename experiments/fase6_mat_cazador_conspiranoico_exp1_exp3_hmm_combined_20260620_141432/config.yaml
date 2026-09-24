@@ -101,7 +101,7 @@ cazador:
   sell_threshold_pct: 0.20        # Alerta si insider vende > 20% de sus acciones
   lookback_days: 30               # Ventana de búsqueda de actividad
   form4_lag_days: 2               # Lag de reporte SEC Form 4 (máx. 2 días hábiles)
-  sec_user_agent: "Mario Merino mariomerinomartin2@gmail.com"  # Obligatorio: política fair-access SEC EDGAR
+  sec_user_agent: ""  # scrubbed: set SEC_USER_AGENT env var  # Obligatorio: política fair-access SEC EDGAR
   mode: "judge"                   # "judge" = feature del meta-modelo | "risk_modulator" = escala f* por ticker
   alert_kelly_scale: 0.5          # Multiplicador Kelly cuando hay alerta insider (solo risk_modulator)
 

@@ -71,9 +71,9 @@ def load_serialized_models() -> tuple:
 def download_latest_data(cfg: dict, target_date: date) -> tuple[dict, pd.DataFrame]:
     """Download T-1 data for all tickers + VIX, extending end_date to target_date."""
     import copy
-    from data.downloader import download_all
-    from data.features import compute_all_features
-    from data.regime import build_regime_features, download_vix
+    from mas.data.downloader import download_all
+    from mas.data.features import compute_all_features
+    from mas.data.regime import build_regime_features, download_vix
 
     # Extend data range to cover target_date so paper-trading inference uses current prices
     dl_cfg = copy.deepcopy(cfg)
@@ -101,10 +101,10 @@ def run_inference(
     Run the full inference pipeline for a single date.
     Returns list of decision dicts for each ticker.
     """
-    from agents.matematico import FEATURE_COLUMNS
-    from agents.gestor_riesgos import GestorRiesgos
-    from agents.conspiranoico import Conspiranoico
-    from agents.cazador import Cazador
+    from mas.agents.matematico import FEATURE_COLUMNS
+    from mas.agents.gestor_riesgos import GestorRiesgos
+    from mas.agents.conspiranoico import Conspiranoico
+    from mas.agents.cazador import Cazador
 
     gestor = GestorRiesgos.from_config(cfg)
     conspiranoico = Conspiranoico(cfg)
@@ -217,7 +217,7 @@ def run_inference(
 
 def update_positions(decisions: list[dict], target_date: date, cfg: dict) -> None:
     """Update logs/positions_current.json based on today's decisions."""
-    from utils.paper_equity import (
+    from mas.utils.paper_equity import (
         apply_decisions_with_cash,
         build_positions_state,
         get_cash_balance,
@@ -251,7 +251,7 @@ def generate_xai_artifacts(
     cfg: dict,
 ) -> None:
     """Generate SHAP beeswarm and reliability diagram PNGs with dark theme."""
-    from agents.matematico import FEATURE_COLUMNS
+    from mas.agents.matematico import FEATURE_COLUMNS
 
     static_dir = ROOT / "dashboard" / "api" / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
@@ -375,7 +375,7 @@ def run_single_day(
 
         update_positions(decisions, target_date, cfg)
 
-        from utils.paper_equity import (
+        from mas.utils.paper_equity import (
             append_paper_equity_row,
             compute_portfolio_value,
             load_positions_state,
@@ -441,13 +441,13 @@ def main() -> int:
     run_timestamp = datetime.now().isoformat(timespec="seconds")
     yesterday = date.today() - timedelta(days=1)
 
-    from utils.config_loader import load_config
-    from utils.paper_equity import (
+    from mas.utils.config_loader import load_config
+    from mas.utils.paper_equity import (
         get_last_processed_date,
         iter_catch_up_dates,
         refresh_dashboard_equity_curve,
     )
-    from utils.reproducibility import set_all_seeds
+    from mas.utils.reproducibility import set_all_seeds
 
     cfg = load_config(
         profile_path="profiles/exp1_menos_friccion.yaml",

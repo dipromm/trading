@@ -14,7 +14,7 @@ Cobertura:
 import pandas as pd
 import pytest
 
-from data.insiders import (
+from mas.data.insiders import (
     RELEVANT_ROLES,
     _empty_df,
     _extract_role_from_title,
@@ -466,14 +466,14 @@ class TestCazadorAgent:
 
     def test_fit_is_noop(self):
         """El Cazador no se entrena; fit() no debe fallar."""
-        from agents.cazador import Cazador
+        from mas.agents.cazador import Cazador
         agent = Cazador(self._make_cfg())
         agent.fit(pd.DataFrame())
         assert agent.is_fitted()
 
     def test_predict_ticker_returns_binary_series(self):
         """predict_ticker retorna Serie binaria 0/1 con datos de insider en formato SEC."""
-        from agents.cazador import Cazador
+        from mas.agents.cazador import Cazador
         agent = Cazador(self._make_cfg())
 
         agent._insider_data["AAPL"] = pd.DataFrame({
@@ -496,7 +496,7 @@ class TestCazadorAgent:
 
     def test_predict_ticker_etf_no_data_all_zeros(self):
         """Para un ETF sin datos de insider → serie de ceros."""
-        from agents.cazador import Cazador
+        from mas.agents.cazador import Cazador
         agent = Cazador(self._make_cfg())
         agent._insider_data["TLT"] = pd.DataFrame()
 

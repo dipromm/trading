@@ -1,0 +1,21 @@
+[project]
+name = "mas-trading"
+version = "1.0.0"
+description = "Multi-agent trading system with walk-forward validation, Kelly-based risk management and a live dashboard"
+requires-python = ">=3.11"
+readme = "README.md"
+dynamic = ["dependencies"]
+
+[tool.setuptools]
+packages = ["mas"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
+filterwarnings = [
+    "ignore::sklearn.exceptions.ConvergenceWarning",
+]

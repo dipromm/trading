@@ -7,7 +7,7 @@ Son la garantía de que el sistema de posicionamiento es matemáticamente correc
 
 import pytest
 
-from agents.gestor_riesgos import GestorRiesgos
+from mas.agents.gestor_riesgos import GestorRiesgos
 
 
 @pytest.fixture

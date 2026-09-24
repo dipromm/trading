@@ -1,61 +1,38 @@
 # ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-.Python
 *.egg-info/
 dist/
 build/
-.eggs/
+.pytest_cache/
 
-# ── Entornos virtuales ────────────────────────────────────────────────────────
+# ── Virtual environments / secrets ───────────────────────────────────────────
 .venv/
 venv/
-env/
 .env
+*.env
+!.env.example
 
-# ── Datos (no versionar datos descargados, solo el CSV de tickers) ────────────
-data/raw/
+# ── Downloaded data (only the ticker universe CSV is versioned) ──────────────
 data/cache/
+data/raw/
 data/processed/
-!data/nasdaq100_top40_2018-01-01.csv   # El universo de tickers SÍ se versiona
 
-# ── Modelos entrenados ────────────────────────────────────────────────────────
-*.pkl
+# ── Trained models (registry.json with hashes is versioned) ──────────────────
 *.joblib
+*.pkl
 *.pt
-*.pth
-*.h5
 
-# ── Logs y experimentos ───────────────────────────────────────────────────────
-logs/trades/*.json
+# ── Runtime logs of paper trading ────────────────────────────────────────────
 logs/trades/*.jsonl
-logs/paper_trading/
 logs/errors/
 logs/positions_current.json
 
-# ── Dashboard artefactos generados ───────────────────────────────────────────
+# ── Generated dashboard artifacts ────────────────────────────────────────────
 dashboard/api/static/*.png
 
-# ── Jupyter ───────────────────────────────────────────────────────────────────
-.ipynb_checkpoints/
-*.ipynb
-
-# ── IDEs ─────────────────────────────────────────────────────────────────────
+# ── IDEs / OS ────────────────────────────────────────────────────────────────
 .idea/
 .vscode/
-*.swp
-*.swo
-
-# ── OS ────────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
-
-# ── Streamlit ─────────────────────────────────────────────────────────────────
-.streamlit/secrets.toml
-
-# ── Secrets ───────────────────────────────────────────────────────────────────
-.env
-*.env
-secrets.yaml

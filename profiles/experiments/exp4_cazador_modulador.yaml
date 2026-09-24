@@ -1,0 +1,23 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Experimento 4: Cazador como modulador de riesgo
+# ──────────────────────────────────────────────────────────────────────────────
+# Objetivo: alertas insider reducen f* del ticker (×0.5) en lugar de entrar
+# al meta-modelo del Juez. El Juez queda en pass-through del Matemático.
+#
+# Comparar contra:
+#   experiments/fase6_mat_cazador_conspiranoico_20260619_161511
+#
+# Uso:
+#   python run.py --cazador --conspiranoico --profile profiles/experiments/exp4_cazador_modulador.yaml
+#
+# Stack completo (Exp1+Exp3+Exp4):
+#   python run.py --cazador --conspiranoico --profile profiles/experiments/exp1_exp3_exp4_combined.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+profile:
+  name: "exp4_cazador_modulador"
+  description: "Cazador escala Kelly por ticker; excluido del meta-modelo del Juez"
+
+cazador:
+  mode: "risk_modulator"
+  alert_kelly_scale: 0.5

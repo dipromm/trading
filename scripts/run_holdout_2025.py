@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def _metrics_for_period(equity, returns, *, before: str | None = None, from_date: str | None = None) -> dict:
-    from backtester.metrics import summary
+    from mas.backtester.metrics import summary
 
     if before is not None:
         cut = pd.Timestamp(before)
@@ -59,8 +59,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    from utils.config_loader import load_config
-    from utils.reproducibility import set_all_seeds
+    from mas.utils.config_loader import load_config
+    from mas.utils.reproducibility import set_all_seeds
 
     cfg = load_config(profile_path=args.profile, force_reload=True)
     set_all_seeds(cfg["general"]["random_seed"])
@@ -84,16 +84,16 @@ def main() -> int:
     )
 
     # -- Datos (mismo pipeline que run.py Fase 6) --
-    from data.downloader import download_all
-    from data.features import compute_all_features
-    from data.regime import build_regime_features, download_vix
-    from agents.cazador import Cazador
-    from agents.conspiranoico import Conspiranoico
-    from agents.gestor_riesgos import GestorRiesgos
-    from agents.matematico import Matematico
-    from backtester.walk_forward import WalkForwardValidator
-    from baselines import buy_and_hold
-    from judge.judge_v1 import JuezV1
+    from mas.data.downloader import download_all
+    from mas.data.features import compute_all_features
+    from mas.data.regime import build_regime_features, download_vix
+    from mas.agents.cazador import Cazador
+    from mas.agents.conspiranoico import Conspiranoico
+    from mas.agents.gestor_riesgos import GestorRiesgos
+    from mas.agents.matematico import Matematico
+    from mas.backtester.walk_forward import WalkForwardValidator
+    from mas.baselines import buy_and_hold
+    from mas.judge.judge_v1 import JuezV1
 
     logger.info("Cargando precios y features...")
     prices = download_all(cfg, force_download=args.force_download)
@@ -138,7 +138,7 @@ def main() -> int:
     bh_holdout_eq, bh_holdout_rets = buy_and_hold.run(
         prices, start_date=holdout_start, end_date=end_date, config=cfg,
     )
-    from backtester.metrics import summary
+    from mas.backtester.metrics import summary
 
     bh_holdout = summary(bh_holdout_eq, bh_holdout_rets) if not bh_holdout_eq.empty else {}
 
