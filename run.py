@@ -9,7 +9,7 @@ Uso:
     python run.py --analista               # + El Analista (FinBERT, Fase 4)
     python run.py --cazador                # + El Cazador (SEC Form 4, Fase 5)
     python run.py --cazador --conspiranoico --profile profiles/exp1_menos_friccion.yaml
-                                           # Configuraci?n can?nica (Fase 6)
+                                           # Configuración canónica (Fase 6)
     python run.py --force-download         # Re-descarga todos los datos
     python run.py --no-baselines           # Saltar comparativa de baselines
     python run.py --debug                  # Logging verbose
@@ -37,6 +37,9 @@ import pandas as pd
 
 def _setup_logging(debug: bool = False) -> None:
     level = logging.DEBUG if debug else logging.INFO
+    # Windows: evitar UnicodeEncodeError (€, →) cuando stdout se redirige a fichero
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     logging.basicConfig(
         level=level,
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
@@ -576,7 +579,7 @@ def _save_dashboard_artifacts(
     profile_path: str | None = None,
     agents: list[str] | None = None,
 ) -> None:
-    """Exporta curva de capital y métricas para el dashboard Streamlit."""
+    """Exporta curva de capital y métricas para el dashboard (logs/dashboard/)."""
     dash_dir = Path(config["general"]["log_dir"]) / "dashboard"
     dash_dir.mkdir(parents=True, exist_ok=True)
 

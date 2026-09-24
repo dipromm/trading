@@ -243,7 +243,7 @@ def assign_to_trading_days(
     """
     Assign each news article to its effective trading day.
 
-    Rules (from Plan.md):
+    Rules (from docs/PLAN.md):
         - During market hours: assigned to that day
         - After market close / weekends / holidays: next trading day
         - NYSE closes at 16:00 ET

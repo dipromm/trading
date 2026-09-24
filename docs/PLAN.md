@@ -1,9 +1,9 @@
 # Sistema Multi-Agente (MAS) para Predicción y Toma de Decisiones en Mercados Financieros
 
-> **Nota (septiembre 2026):** documento de dise?o original (fases 1?9). El estado real de implementaci?n y
-> los resultados est?n en [`MEMORIA.md`](MEMORIA.md) y en el README de la ra?z. Las rutas de c?digo citadas aqu?
-> son las originales; en el repositorio actual el c?digo vive bajo el paquete `mas/` (p. ej. `agents/` ?
-> `mas/agents/`). El dashboard (Fase 7) se implement? con FastAPI + Next.js en lugar de Streamlit; el Juez v2 (RL)
+> **Nota (septiembre 2026):** documento de diseño original (fases 1–9). El estado real de implementación y
+> los resultados están en [`MEMORIA.md`](MEMORIA.md) y en el README de la raíz. Las rutas de código citadas aquí
+> son las originales; en el repositorio actual el código vive bajo el paquete `mas/` (p. ej. `agents/` →
+> `mas/agents/`). El dashboard (Fase 7) se implementó con FastAPI + Next.js en lugar de Streamlit; el Juez v2 (RL)
 > y El Explorador (Fase 9) no se implementaron.
 
 ---

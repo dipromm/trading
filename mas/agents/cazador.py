@@ -1,7 +1,7 @@
 """
 El Cazador — Detección de actividad inusual de insiders (SEC Form 4).
 
-No usa ML. Son reglas condicionales sobre datos de OpenInsider.
+No usa ML. Son reglas condicionales sobre transacciones Form 4 de SEC EDGAR.
 
 Regla principal:
     Si un CEO/CFO/Director vende > SELL_THRESHOLD% de sus acciones
@@ -12,7 +12,7 @@ Regla principal:
     la transacción. Aplicar siempre FORM4_LAG_DAYS en el backtester.
     Esto se hace usando filing_date + shift(FORM4_LAG_DAYS) sobre días hábiles.
 
-Fuente de datos: https://openinsider.com (scraping con pausa entre requests)
+Fuente de datos: SEC EDGAR (data.sec.gov), ver mas/data/insiders.py
 """
 
 import logging
@@ -35,11 +35,11 @@ class Cazador(AgentBase):
     Agente de detección de actividad de insiders basado en reglas.
 
     No requiere entrenamiento. Las alertas se calculan a partir de los
-    datos de OpenInsider cacheados y las reglas configuradas.
+    datos de SEC EDGAR cacheados y las reglas configuradas.
 
     Flujo de uso:
         1. (Una vez antes del walk-forward) Llamar a precompute_insider_signals()
-           para descargar y cachear los datos de OpenInsider.
+           para descargar y cachear los datos de SEC EDGAR.
         2. En cada ventana walk-forward, fit() es no-op.
         3. predict(val_data) retorna una Serie binaria 0/1 por fecha.
     """

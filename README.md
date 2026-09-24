@@ -1,324 +1,261 @@
-# MAS Trading System
+# MAS Trading — a multi-agent council for daily stock signals
 
-An AI-powered multi-agent ensemble for daily trading decisions on U.S. equities. Four specialized agents analyze markets from isolated perspectives — technical patterns, news sentiment, insider activity, and regime detection — while a central Judge combines their votes into actionable signals validated through rigorous walk-forward backtesting.
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![Tests](https://img.shields.io/badge/tests-362%20passed-brightgreen)
+![Frontend](https://img.shields.io/badge/dashboard-FastAPI%20%2B%20Next.js-black)
+![Status](https://img.shields.io/badge/mode-paper%20trading-orange)
 
-**[Live Dashboard](#) · [API Docs (FastAPI)](#) · [Video Demo](#)**
+A research-grade trading system where several specialised agents (an XGBoost "mathematician", an
+insider-selling watcher, a market-regime anomaly detector, an optional FinBERT news reader) vote on
+40 Nasdaq-100 stocks plus 6 diversification ETFs. A meta-model judge blends the votes, a Half-Kelly
+risk manager sizes positions, and everything is validated with strict walk-forward testing against
+Buy & Hold and SMA-crossover baselines. A frozen model runs daily in paper trading and a
+FastAPI + Next.js dashboard shows what the council decided and why.
+
+> Paper trading only. Nothing here is investment advice and the system is not designed to trade real money.
 
 ---
 
-## Architecture
+## Results at a glance
+
+**Walk-forward, out-of-sample 2021–2024** (train ≥3 years, validate 1 year, roll forward, 1 005 trading days, 0.08 % commission per side, €10 000 start):
+
+| Strategy | Total return | Annualised | Sharpe | Max drawdown | Calmar | Win rate |
+|---|---:|---:|---:|---:|---:|---:|
+| **MAS (Matemático + Cazador + Conspiranoico)** | **+86.6 %** | **17.8 %** | **0.861** | -29.6 % | **0.60** | 52.3 % |
+| Buy & Hold (equal-weight universe) | +67.9 % | 15.3 % | 0.723 | -31.4 % | 0.49 | 52.4 % |
+| SMA crossover 20/50 | +14.5 % | 4.2 % | 0.329 | -22.3 % | 0.19 | 54.1 % |
+
+| Window | Return | Sharpe | Max DD | Win rate |
+|---|---:|---:|---:|---:|
+| 2021 | +24.0 % | 1.426 | -10.2 % | 54.8 % |
+| 2022 | -21.2 % | -0.765 | -29.3 % | 43.4 % |
+| 2023 | +44.6 % | 2.334 | -10.2 % | 53.6 % |
+| 2024 | +35.0 % | 1.505 | -14.4 % | 57.1 % |
+
+**Holdout 2025** (touched exactly once, after all tuning was frozen):
+
+| Strategy | Return | Sharpe | Max DD | Calmar | Win rate |
+|---|---:|---:|---:|---:|---:|
+| MAS | **+26.8 %** | 1.148 | -20.8 % | **1.31** | **60.2 %** |
+| Buy & Hold | +23.9 % | 1.213 | -18.3 % | 1.30 | 57.3 % |
+
+**Paper trading** started 2026-01-02 with €10 000; the simulated book stood at €11 662 (+16.6 %) on 2026-08-07.
+
+The honest reading: the system beats both baselines on Sharpe, Calmar and total return out-of-sample,
+but 2022 (a bear market) is still a losing year and the edge over Buy & Hold in strong bull years is thin.
+See [Limitations](#limitations).
+
+---
+
+## How it works
 
 ```mermaid
 flowchart LR
-    subgraph agents [Agents]
-        MAT["El Matemático\nXGBoost"]
-        ANA["El Analista\nFinBERT"]
-        CAZ["El Cazador\nSEC Form 4"]
-        CON["El Conspiranoico\nIsolation Forest + HMM"]
+    subgraph Data
+        Y[yfinance OHLCV<br/>46 tickers, 2018→] --> F[Technical features<br/>15 lookback-safe columns]
+        V[^VIX + cross-sectional<br/>volatility / correlation] --> R[Regime features]
+        S[SEC EDGAR Form 4<br/>2-business-day lag] --> I[Insider alerts]
+        N[Alpaca News<br/>optional] --> B[FinBERT sentiment]
     end
 
-    subgraph core [Core]
-        JUEZ["El Juez Central\nMeta-model ensemble"]
-        RISK["Gestor de Riesgos\nFractional Kelly"]
-        BT["Backtester\nWalk-forward engine"]
-    end
+    F --> M[El Matemático<br/>XGBoost + Platt calibration]
+    B --> A[El Analista<br/>FinBERT probabilities]
+    I --> C[El Cazador<br/>rule-based insider-selling flag]
+    R --> K[El Conspiranoico<br/>Isolation Forest / HMM regime veto]
 
-    subgraph serve [Serving]
-        LOGS["Logs / JSON\nexperiments + trades"]
-        API["FastAPI\nPydantic v2"]
-        DASH["Dashboard\nNext.js + Recharts"]
-    end
-
-    MAT --> JUEZ
-    ANA --> JUEZ
-    CAZ --> JUEZ
-    CON -->|veto| JUEZ
-    JUEZ --> RISK
-    RISK --> BT
-    BT --> LOGS
-    LOGS --> API
-    API --> DASH
+    M --> J[Juez v1<br/>pass-through → logistic meta-model]
+    A --> J
+    C --> J
+    J --> G[Gestor de Riesgos<br/>Half-Kelly, asset-class caps, ATR stop]
+    K -- veto / Kelly scale --> G
+    G --> E[Backtest engine<br/>or daily paper-trading decision]
 ```
 
-### The Council of Agents
+### The council
 
-| Agent | Role | Technology | Output |
-|---|---|---|---|
-| **El Matemático** | Technical analysis — price and volume trends | XGBoost + Platt Scaling calibration | Calibrated probability p ∈ [0, 1] |
-| **El Analista** | Sentiment from financial headlines | FinBERT (HuggingFace, ~438 MB) | Calibrated probability p ∈ [0, 1] |
-| **El Cazador** | Insider trading detection via SEC filings | SEC EDGAR Form 4 parser | Binary signal: alert / silence |
-| **El Conspiranoico** | Anomalous market regime detection | Isolation Forest + Hidden Markov Model | Veto signal: active / inactive |
-| **Gestor de Riesgos** | Position sizing and emergency exits | Fractional Kelly (ρ=0.5) + ATR stop-loss | Capital fraction f* ∈ [0, 0.15] per ticker |
-| **El Juez Central** | Final trading decision from weighted votes | Logistic regression meta-model | BUY / SELL / HOLD |
-
----
-
-## Results
-
-### Walk-Forward vs Holdout vs Baselines
-
-Results from the canonical experiment. Walk-forward uses expanding training windows; the holdout period (2025-01-01 onward) was never seen during model selection.
-
-| Metric | Walk-Forward (MAS) | Holdout (MAS) | Buy & Hold | SMA Crossover |
-|---|---|---|---|---|
-| **Sharpe Ratio** | — | — | — | — |
-| **Max Drawdown** | — | — | — | — |
-| **Calmar Ratio** | — | — | — | — |
-| **Annualized Return** | — | — | — | — |
-| **Win Rate** | — | — | — | — |
-
-> Fill in with actual values after running the canonical experiment. Values are shown live on the [dashboard](#).
-
----
-
-## Quick Start
-
-### One-command setup (Docker)
-
-```bash
-cp .env.example .env
-docker-compose up
-```
-
-- **Dashboard:** http://localhost:3000
-- **API docs:** http://localhost:8000/docs
-- **Health check:** http://localhost:8000/health
-
-### Local development — normal run
-
-Flujo habitual para levantar el dashboard en local (desde la raíz del repo `trading/`).
-
-#### 1. Primera vez (o tras clonar)
-
-```bash
-# Python
-python -m venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # macOS/Linux
-pip install -r requirements.txt
-
-# Variables de entorno (opcional; los defaults sirven en local)
-copy .env.example .env          # Windows
-# cp .env.example .env          # macOS/Linux
-
-# Frontend
-cd dashboard/frontend
-npm install
-cd ../..
-```
-
-#### 2. Preparar datos del dashboard (cuando falten métricas, equity curve o modelos)
-
-Ejecutar **con el venv activado**, en este orden:
-
-```bash
-python -m scripts.setup_models
-python -m scripts.generate_dashboard_data
-python -m scripts.generate_xai_artifacts
-```
-
-- `setup_models` — serializa modelos en `models/` y reconstruye la equity curve.
-- `generate_dashboard_data` — escribe `logs/dashboard/equity_curve.csv` y métricas JSON.
-- `generate_xai_artifacts` — genera SHAP y diagrama de calibración en `dashboard/api/static/`.
-
-> Solo hace falta repetir este bloque si cambias experimentos, modelos o quieres refrescar los artefactos XAI.
-
-#### 3. Levantar API y frontend (dos terminales)
-
-**Terminal 1 — API (puerto 8000):**
-
-```bash
-.venv\Scripts\activate
-uvicorn dashboard.api.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-**Terminal 2 — Frontend (puerto 3000):**
-
-```bash
-cd dashboard/frontend
-npm run dev
-```
-
-Abrir **http://localhost:3000** (Lab, Desk, Experiments, etc.). La API queda en **http://localhost:8000/docs**.
-
-#### 4. Paper trading diario (días hábiles NYSE)
-
-Tras el cierre de mercado, actualiza decisiones, posiciones, **curva de equity del Lab** y artefactos XAI.
-
-```bash
-.venv\Scripts\activate
-python run_daily.py
-```
-
-**Comportamiento por defecto (catch-up automático):** detecta el último día con datos (`paper_equity.csv`, logs `YYYY-MM-DD.jsonl` o `positions_current.json`) y procesa **todos los días hábiles NYSE pendientes hasta ayer**.
-
-- En **fin de semana o festivos** no hay días hábiles en el rango → sale con `up_to_date` o `market_closed`.
-- Cada ejecución exitosa añade puntos a `paper_equity.csv` y al final regenera `equity_curve.csv` una sola vez.
-- Solo ayer (útil en cron diario): `python run_daily.py --no-catch-up`
-- Un día concreto: `python run_daily.py --date 2026-06-26`
-- Reprocesar días que ya tienen log: `python run_daily.py --force`
-
-Si corriste `run_daily` varios días **antes** de tener tracking de equity, rellena la curva histórica con:
-
-```bash
-python -m scripts.backfill_paper_equity --from 2026-06-19 --to 2026-06-30
-```
-
-#### Resumen rápido (día a día)
-
-```bash
-# Terminal 1
-.venv\Scripts\activate && uvicorn dashboard.api.main:app --reload --port 8000
-
-# Terminal 2
-cd dashboard/frontend && npm run dev
-
-# Tras cierre NYSE (lun–vie), opcional:
-python run_daily.py
-# equivalente explícito solo-ayer: python run_daily.py --no-catch-up
-```
-
-### Manual setup (referencia mínima)
-
-```bash
-# Backend
-python -m venv .venv
-.venv\Scripts\activate          # Windows
-# source .venv/bin/activate     # macOS/Linux
-pip install -r requirements.txt
-
-# Frontend
-cd dashboard/frontend
-npm install
-npm run dev
-
-# API (otra terminal, desde la raíz del repo)
-uvicorn dashboard.api.main:app --reload
-```
-
-### Daily pipeline (cron en servidor)
-
-Después del deploy en VPS, programar el pipeline diario post-cierre NYSE:
-
-```bash
-# crontab -e
-0 23 * * 1-5 cd /app && python run_daily.py >> logs/cron.log 2>&1
-```
-
----
-
-## Technology Stack
-
-| Layer | Technology | Justification |
+| Agent | Role | Method |
 |---|---|---|
-| **Agents** | Python, XGBoost, FinBERT, Isolation Forest, HMM | Isolated models with calibrated outputs — no shared state |
-| **Risk Management** | Fractional Kelly (ρ=0.5) + ATR stop-loss | Position sizing from edge magnitude, capped at 15% per ticker |
-| **Backtesting** | Custom walk-forward engine | Anti-leakage by design — expanding windows, no future data |
-| **API** | FastAPI + Pydantic v2 + slowapi | Typed schemas → OpenAPI → auto-generated TypeScript types |
-| **Dashboard** | Next.js 16, React 19, TanStack Query, Recharts, Tailwind 4 | SSR, stale-while-revalidate caching, interactive charts |
-| **Data** | yfinance, Alpaca News API, SEC EDGAR | Free APIs with documented T-1 lag |
+| **El Matemático** | Probability that tomorrow's close is up, per ticker | XGBoost on 15 technical features (returns, RSI, MACD, Bollinger, ATR, volume ratio, SMA ratios), Platt-calibrated with 5-fold CV |
+| **El Analista** *(optional)* | Same target from news headlines | FinBERT over Alpaca News, daily aggregation, calibrated. Needs `ALPACA_API_KEY` |
+| **El Cazador** | Bearish flag when C-level insiders dump > 20 % of their holdings | SEC EDGAR Form 4 XML parsing, NYSE-calendar lag so the signal is only visible when the market could have seen it |
+| **El Conspiranoico** | Market-wide "something is off" veto | Isolation Forest (or 3-state Gaussian HMM, or hybrid) on VIX + realised-vol + correlation + volume features. Binary veto or soft Kelly scaling |
+| **Juez v1** | Combines agent probabilities | Pass-through in the first window, then a logistic meta-model trained only on the previous window's out-of-sample predictions |
+| **Gestor de Riesgos** | Position sizing and exits | Half-Kelly `f* = ρ·(p − (1−p)/b)`, per-asset-class caps (equity / bond / gold / defensive / international), 2×ATR stop-loss |
+
+### Methodology guard-rails
+
+- **Walk-forward validation, never a single split.** Windows: train 2018→N, validate year N+1, for N+1 ∈ {2021, 2022, 2023, 2024}. Positions carry across windows (no artificial year-end liquidation).
+- **No look-ahead.** All features use only data up to day *T*; a test greps `features.py` for forbidden `shift(-…)` on inputs. Insider filings are lagged by NYSE business days. VIX percentiles for veto thresholds are computed on the training window only.
+- **Judge trained out-of-sample.** The meta-model only ever sees predictions the agents made on data they were not trained on.
+- **Holdout discipline.** 2025 was reserved from day one and evaluated once.
+- **Reproducibility.** Global seeds, every run saves `config.yaml` + `results.json` + equity curve under `experiments/`, frozen models are hashed (SHA-256) in `models/registry.json`.
+- **Baselines always on.** Buy & Hold and SMA 20/50 are computed over the exact same out-of-sample dates.
+
+### Experiment campaign
+
+Eleven configuration experiments (`profiles/experiments/`) were run on top of the base stack
+(Matemático + Cazador + Conspiranoico, positions carried across windows). Out-of-sample Sharpe 2021–2024,
+from `reports/experiment_grid_carry.json` and the run directories under `experiments/`:
+
+| Experiment | Idea | Sharpe | Verdict |
+|---|---|---:|---|
+| Base stack | Isolation-Forest binary veto, meta-model judge | 0.583 | Reference |
+| **Exp1 `menos_friccion`** | 1 % Kelly floor, entry filter `p ≥ 0.45`, 3-day sell hysteresis | **0.86–0.91** | **Canonical.** Less churn, best Sharpe and Calmar |
+| Exp2 wider stop-loss | 3×ATR instead of 2×ATR | 0.635 | Small gain alone, none on top of Exp1 |
+| Exp3 soft veto | Scale Kelly by anomaly tier instead of all-or-nothing | 0.586 | Best drawdown (-26.5 %), lower Sharpe |
+| Exp4 Cazador as risk modulator | Insider alert halves Kelly instead of feeding the judge | 0.502 | Worse |
+| Exp5 Kelly boost | ρ = 0.6 when VIX is low and regime is normal | 0.593 | More return, more drawdown |
+| Exp6 / Exp9 judge pass-through | Skip the meta-model | 0.502 | Worse — the judge earns its keep |
+| Exp7 defensive rotation | Move 30 % into TLT/IEF/GLD on severe veto | 0.491 | Worse |
+| Exp8 veto percentile p5 → p7 | Looser veto | 0.602 | Marginal |
+| Exp10 carry positions | Do not liquidate between walk-forward windows | — | Large fix, now the default for every row above |
+| Exp11 HMM regime detector | 3-state Gaussian HMM instead of Isolation Forest (with Exp1) | 0.882 | Comparable to Exp1, not better |
+
+Combinations (Exp1+Exp3+Exp8 = 0.861 with -28 % DD, Exp1+Exp3+HMM = 0.875 with -21.8 % DD) trade a little
+Sharpe for drawdown; Exp1 alone stayed canonical because it is the simplest configuration that wins on the
+primary metric. Selection rule and reproduction steps: [`experiments/README.md`](experiments/README.md).
+The complete decision log lives in [`docs/MEMORIA.md`](docs/MEMORIA.md) (Spanish).
 
 ---
 
-## Asset Universe
+## Dashboard
 
-40 Nasdaq 100 stocks + 6 diversification ETFs, frozen as of January 1, 2018.
+`dashboard/api` (FastAPI, rate-limited, CORS-configurable) serves the historical results, XAI artifacts and the live paper-trading state; `dashboard/frontend` (Next.js 16, React 19, TanStack Query, Recharts, Tailwind 4) renders them.
 
-| Class | Tickers | Cap per ticker | Portfolio cap |
-|---|---|---|---|
-| Equity (Nasdaq) | 40 stocks | 15% | 80% |
-| Bonds | TLT, IEF | 20% | 30% |
-| Gold | GLD | 10% | 10% |
-| Defensive | XLU, XLP | 15% | 20% |
-| International | EFA | 10% | 10% |
-
----
-
-## Dashboard Pages
-
-| Route | Purpose |
+| Route | What you see |
 |---|---|
-| `/` | Landing page — system overview, holdout metrics, agent cards |
-| `/lab` | Walk-forward results, equity curve, drawdown, XAI (SHAP + calibration) |
-| `/desk` | Live paper trading — council verdict, risk allocation, trade log |
-| `/experiments` | All experiment runs compared side-by-side |
-| `/architecture` | System diagram, tech stack, known limitations |
+| `/` | Headline metrics, equity curve vs baselines across walk-forward → holdout → paper |
+| `/lab` | Per-window metrics, SHAP beeswarm for the Matemático, reliability (calibration) diagram |
+| `/desk` | Live paper-trading desk: open positions, today's council verdict per ticker, trade log |
+| `/experiments` | All experiment runs side by side |
+| `/architecture` | Interactive explanation of the agents and data flow |
 
 ---
 
-## Tests
+## Quick start
+
+Requirements: Python 3.11+, Node 20+ (dashboard only). Tested on Windows and Linux.
 
 ```bash
-# Python tests (backtester, agents)
-pytest tests/ -v
-
-# Frontend tests (React components)
-cd dashboard/frontend
-npm test
+git clone https://github.com/dipromm/trading.git && cd trading
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env                                    # fill SEC_USER_AGENT (and Alpaca keys if you want --analista)
 ```
 
-### Critical test coverage
-
-- **Anti-leakage:** no feature at time T uses data from T+1
-- **Commission integrity:** same-day round-trip always loses money
-- **Reproducibility:** same seed → identical Sharpe Ratio
-- **Kelly bounds:** f* ≤ 0 never triggers BUY; f* never exceeds 15% cap
-- **HealthDot:** shows red when pipeline reports error
-- **Empty states:** council table shows contextual message before paper trading starts
-- **Base-100 normalization:** first equity curve point is exactly 100
-
----
-
-## Reproducibility
-
-All results are deterministic with `random_seed: 42` in `config.yaml`. Clone the repo, run the backtest, and you should get the exact same Sharpe Ratio as shown on the dashboard.
+### 1. Run the walk-forward backtest
 
 ```bash
-pytest tests/test_backtester.py::test_reproducibility_same_seed -v
+# Canonical configuration (Matemático + Cazador + Conspiranoico, Exp1 profile)
+python run.py --cazador --conspiranoico --profile profiles/exp1_menos_friccion.yaml
+
+# Matemático only, or add the news agent
+python run.py
+python run.py --analista --cazador --conspiranoico
+```
+
+The first run downloads ~8 years of OHLCV for 46 tickers, VIX and SEC Form 4 filings into `data/cache/`
+(a few minutes; later runs are cached). Each run prints the per-window table and the baseline comparison
+and writes `experiments/<name>_<timestamp>/{config.yaml,results.json,equity_curve.csv}`.
+
+### 2. Holdout 2025
+
+```bash
+python scripts/run_holdout_2025.py --profile profiles/exp1_menos_friccion.yaml
+```
+
+### 3. Freeze models and paper-trade
+
+```bash
+python scripts/setup_models.py             # trains on 2018–2024, writes models/*.joblib + registry.json
+python run_daily.py                        # decisions for the last NYSE close (catches up missed days)
+python run_daily.py --date 2026-03-02      # a specific day
+```
+
+`run_daily.py` writes `logs/trades/YYYY-MM-DD.jsonl` (one decision per ticker with every agent's vote),
+`logs/positions_current.json` and `logs/dashboard/paper_equity.csv`. Schedule it after the US close
+(cron / Task Scheduler) to keep the desk up to date.
+
+### 4. Dashboard
+
+```bash
+python scripts/generate_dashboard_data.py  # metrics + aligned baseline curves
+python scripts/generate_xai_artifacts.py   # SHAP beeswarm + reliability diagram
+uvicorn dashboard.api.main:app --reload    # http://localhost:8000/docs
+
+cd dashboard/frontend && npm install && npm run dev   # http://localhost:3000
+```
+
+Or with Docker: `docker compose up --build` (API on 8000, frontend on 3000).
+
+### 5. Tests
+
+```bash
+pytest                                   # 362 tests: Kelly maths, engine, agents, anti-leakage, data integrity
+cd dashboard/frontend && npm test        # frontend unit tests
 ```
 
 ---
 
-## Known Limitations
-
-These are documented constraints, not bugs. Honest acknowledgment demonstrates engineering maturity.
-
-| Limitation | Detail |
-|---|---|
-| **T-1 data lag** | All signals use end-of-day data from free APIs. Decisions apply to next-day open. |
-| **Survivorship bias** | Universe frozen to Jan 2018 composition. Includes 8 underperformers (INTC, GILD, BIIB, WBA, BIDU, PYPL, ILMN) to mitigate, but the bias is not fully eliminated. |
-| **Paper trading only** | No real broker execution. Commissions simulated at 0.08% per leg. No slippage model. |
-| **Daily signals only** | One signal per ticker per day. No intraday or multi-timeframe analysis — by design, to avoid mixing incompatible signal horizons. |
-
----
-
-## Project Structure
+## Repository layout
 
 ```
 trading/
-├── agents/                  # Agent implementations
-├── backtester/              # Walk-forward engine
+├── run.py                  Walk-forward backtest entry point (agents, profile, baselines)
+├── run_daily.py            Daily paper-trading pipeline
+├── config.yaml             Single source of truth for every parameter
+├── profiles/               YAML overrides: swing / long_term / day_simulated / exp1_menos_friccion (canonical)
+│   └── experiments/        Exp2–Exp11 profiles from the experiment campaign
+├── mas/                    Core package
+│   ├── agents/             matematico, analista, cazador, conspiranoico, gestor_riesgos
+│   ├── judge/              judge_v1 (pass-through → logistic meta-model)
+│   ├── backtester/         engine (commissions, stops, caps), walk_forward, metrics
+│   ├── baselines/          buy_and_hold, sma_crossover
+│   ├── data/               downloader, features, regime (VIX), insiders (SEC EDGAR), news (Alpaca)
+│   └── utils/              config_loader (profile merge), reproducibility, paper_equity
+├── scripts/                setup_models, run_holdout_2025, generate_dashboard_data, generate_xai_artifacts,
+│                           backfill_paper_equity, diagnose_*, run_experiment_grid_carry
 ├── dashboard/
-│   ├── api/                 # FastAPI backend
-│   │   ├── main.py
-│   │   ├── schemas.py       # Pydantic models (source of truth)
-│   │   └── routers/         # historical, live, experiments
-│   └── frontend/            # Next.js 16 dashboard
-│       └── src/
-│           ├── app/         # Pages: /, /lab, /desk, /experiments, /architecture
-│           ├── components/  # React components (lab/, desk/, ui/)
-│           └── lib/         # API hooks, utils
-├── data/                    # Raw and processed market data
-├── experiments/             # Walk-forward experiment results
-├── logs/                    # Trade logs, positions, errors
-├── models/                  # Serialized models + registry.json
-├── config.yaml              # Single source of truth for all parameters
-├── docker-compose.yml       # One-command deployment
-└── requirements.txt         # Python dependencies
+│   ├── api/                FastAPI app, routers (historical / live / experiments), static XAI assets
+│   └── frontend/           Next.js app
+├── tests/                  pytest suite
+├── data/universe_2018-01-01.csv   The fixed 46-ticker universe (40 equities + TLT, IEF, GLD, XLU, XLP, EFA)
+├── experiments/            Every recorded run (config + results + equity curve) and the selection rule
+├── reports/                Holdout and grid-search summaries
+├── models/registry.json    Hashes and metadata of the frozen paper-trading models
+├── logs/dashboard/         Generated metrics and equity curves consumed by the API
+└── docs/                   PLAN.md (original design, Spanish) · MEMORIA.md (full decision log, Spanish)
 ```
 
----
+## Configuration
 
-## License
+Everything lives in `config.yaml`; a profile is a small YAML that overrides some keys and is applied with
+`--profile`. The canonical profile is four lines:
 
-This project is developed as a portfolio piece demonstrating multi-agent AI systems applied to quantitative finance. Not financial advice.
+```yaml
+risk_manager:
+  min_kelly_threshold: 0.01     # ignore allocations below 1 %
+backtester:
+  min_prob_to_buy: 0.45         # entry filter on the judge's probability
+  sell_prob_threshold: 0.45
+  sell_hysteresis_days: 3       # sell only after 3 consecutive weak days
+```
+
+Environment variables (`.env`): `SEC_USER_AGENT` (required by the SEC for `--cazador`), `ALPACA_API_KEY` /
+`ALPACA_SECRET_KEY` (only for `--analista`), `ALLOWED_ORIGINS` (dashboard CORS).
+
+## Limitations
+
+- **2022 loses money.** The regime veto reduces but does not remove bear-market drawdown; the Sharpe edge comes from 2021/2023/2024.
+- **Survivorship bias in the universe.** The 40 stocks were picked in 2018 terms but with today's knowledge of who is still in the Nasdaq-100.
+- **Daily close-to-close, no intraday fills, no slippage model** beyond a flat 0.08 % commission.
+- **El Analista is off in the canonical run**: news coverage before 2021 is sparse, and adding it to the full stack did not improve Sharpe.
+- **Single asset universe, single horizon.** No options, no shorting, no leverage.
+- The Juez v2 reinforcement-learning variant and the "Explorador" universe-rotation agent from the original plan were never built; the gate to justify them was not met.
+
+## Documentation
+
+- [`docs/PLAN.md`](docs/PLAN.md) — original design document: agents, phases, success criteria.
+- [`docs/MEMORIA.md`](docs/MEMORIA.md) — technical logbook: every design decision, experiment result, pitfall and fix, phase by phase.
+- [`experiments/README.md`](experiments/README.md) — how the canonical run was chosen and how to reproduce it.

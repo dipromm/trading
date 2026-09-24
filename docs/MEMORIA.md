@@ -1,12 +1,12 @@
-# Memoria T?cnica del Proyecto
-## Sistema Multi-Agente (MAS) para Predicci?n y Toma de Decisiones en Mercados Financieros
+# Memoria Técnica del Proyecto
+## Sistema Multi-Agente (MAS) para Predicción y Toma de Decisiones en Mercados Financieros
 
-> **Nota (septiembre 2026):** este documento es el cuaderno de bit?cora hist?rico del proyecto y conserva las rutas
-> originales de cada fase. En la reorganizaci?n del repositorio (ver [?6.22](#622-reorganizaci?n-del-repositorio-septiembre-2026))
-> el c?digo Python se movi? al paquete `mas/` (`agents/` ? `mas/agents/`, `backtester/` ? `mas/backtester/`,
-> `data/*.py` ? `mas/data/`, `judge/` ? `mas/judge/`, `utils/` ? `mas/utils/`, `baselines/` ? `mas/baselines/`),
-> los perfiles Exp2?Exp11 pasaron a `profiles/experiments/` y este documento y `Plan.md` viven en `docs/`.
-> El README de la ra?z describe la estructura actual.
+> **Nota (septiembre 2026):** este documento es el cuaderno de bitácora histórico del proyecto y conserva las rutas
+> originales de cada fase. En la reorganización del repositorio (ver §6.22 al final)
+> el código Python se movió al paquete `mas/` (`agents/` → `mas/agents/`, `backtester/` → `mas/backtester/`,
+> `data/*.py` → `mas/data/`, `judge/` → `mas/judge/`, `utils/` → `mas/utils/`, `baselines/` → `mas/baselines/`),
+> los perfiles Exp2–Exp11 pasaron a `profiles/experiments/` y este documento y `Plan.md` viven en `docs/`.
+> El README de la raíz describe la estructura actual.
 
 > **Propósito de este documento:** Registro completo de las decisiones de diseño, metodología, implementación y estado actual del proyecto. Funciona como referencia técnica ante cualquier duda futura sobre el porqué de cada decisión.
 
@@ -1928,17 +1928,17 @@ python scripts/run_experiment_grid_carry.py
 
 ---
 
-### 6.21 Fase 7 ? Holdout 2025, paper trading y dashboard (Julio?Agosto 2026)
+### 6.21 Fase 7 — Holdout 2025, paper trading y dashboard (Julio–Agosto 2026)
 
-Tras cerrar la campa?a de experimentos (?6.20) se congel? `exp1_menos_friccion` como configuraci?n can?nica
-(`experiments/fase6_mat_cazador_conspiranoico_exp1_menos_friccion_20260622_035259`) y se complet? la Fase 7.
+Tras cerrar la campaña de experimentos (§6.20) se congeló `exp1_menos_friccion` como configuración canónica
+(`experiments/fase6_mat_cazador_conspiranoico_exp1_menos_friccion_20260622_035259`) y se completó la Fase 7.
 
 #### Holdout 2025 (una sola pasada, sin re-tuning)
 
-`scripts/run_holdout_2025.py --profile profiles/exp1_menos_friccion.yaml` a?ade la ventana holdout
-(train 2018?2024 ? val 2025) al walk-forward y guarda `reports/holdout_2025_exp1_menos_friccion.json`.
+`scripts/run_holdout_2025.py --profile profiles/exp1_menos_friccion.yaml` añade la ventana holdout
+(train 2018–2024 → val 2025) al walk-forward y guarda `reports/holdout_2025_exp1_menos_friccion.json`.
 
-| M?trica (2025) | MAS | Buy & Hold |
+| Métrica (2025) | MAS | Buy & Hold |
 |---|---|---|
 | Retorno total | **+26.78%** | +23.93% |
 | Sharpe | 1.148 | 1.213 |
@@ -1946,53 +1946,54 @@ Tras cerrar la campa?a de experimentos (?6.20) se congel? `exp1_menos_friccion` 
 | Calmar | 1.313 | 1.297 |
 | Win rate | 60.24% | 57.26% |
 
-Lectura: el sistema sostiene el comportamiento OOS del walk-forward (Sharpe 0.86 en 2021?2024) sin degradarse,
-pero tampoco se distancia de B&H en un a?o alcista. Holdout usado una ?nica vez; no se volvi? a tocar la config.
+Lectura: el sistema sostiene el comportamiento OOS del walk-forward (Sharpe 0.86 en 2021–2024) sin degradarse,
+pero tampoco se distancia de B&H en un año alcista. Holdout usado una única vez; no se volvió a tocar la config.
 
 #### Modelos congelados y paper trading
 
-- `scripts/setup_models.py` entrena Matem?tico + Juez con todo 2018?2024, serializa `models/*.joblib` y escribe
-  `models/registry.json` con hash SHA-256 de cada modelo (los `.joblib` no se versionan; el registry s?).
-- `run_daily.py` es el pipeline de paper trading: descarga precios hasta el ?ltimo cierre NYSE, recalcula
-  features, aplica veto del Conspiranoico + alertas del Cazador + Half-Kelly y escribe una decisi?n por
+- `scripts/setup_models.py` entrena Matemático + Juez con todo 2018–2024, serializa `models/*.joblib` y escribe
+  `models/registry.json` con hash SHA-256 de cada modelo (los `.joblib` no se versionan; el registry sí).
+- `run_daily.py` es el pipeline de paper trading: descarga precios hasta el último cierre NYSE, recalcula
+  features, aplica veto del Conspiranoico + alertas del Cazador + Half-Kelly y escribe una decisión por
   ticker en `logs/trades/YYYY-MM-DD.jsonl`, actualiza `logs/positions_current.json` y
-  `logs/dashboard/paper_equity.csv`. Hace *catch-up* de los d?as h?biles perdidos desde la ?ltima ejecuci?n.
-- Paper trading arranca el 2026-01-02 con ?10.000 (config `data.paper_start`). A 2026-08-07 la cartera
-  simulada marcaba ?11.662 (+16.6%).
+  `logs/dashboard/paper_equity.csv`. Hace *catch-up* de los días hábiles perdidos desde la última ejecución.
+- Paper trading arranca el 2026-01-02 con €10.000 (config `data.paper_start`). A 2026-08-07 la cartera
+  simulada marcaba €11.662 (+16.6%).
 
 #### Dashboard (FastAPI + Next.js)
 
-El dashboard Streamlit previsto en el Plan se sustituy? por una API FastAPI (`dashboard/api`) y un
+El dashboard Streamlit previsto en el Plan se sustituyó por una API FastAPI (`dashboard/api`) y un
 frontend Next.js 16 / React 19 (`dashboard/frontend`).
 
 - API: `/api/historical/{equity-curve,metrics,walkforward-windows,shap-beeswarm,reliability-diagram}`,
   `/api/live/{status,positions,council-verdict,trades,market-close}`, `/api/experiments/`. Rate limit con
   slowapi, CORS configurable con `ALLOWED_ORIGINS`.
-- Frontend: `/` (resumen), `/lab` (walk-forward, ventanas, SHAP, calibraci?n), `/desk` (paper trading en vivo),
+- Frontend: `/` (resumen), `/lab` (walk-forward, ventanas, SHAP, calibración), `/desk` (paper trading en vivo),
   `/experiments` (comparativa de los 60+ runs), `/architecture`.
-- Artefactos: `scripts/generate_dashboard_data.py` (m?tricas WF/holdout/paper + curvas B&H/SMA alineadas)
+- Artefactos: `scripts/generate_dashboard_data.py` (métricas WF/holdout/paper + curvas B&H/SMA alineadas)
   y `scripts/generate_xai_artifacts.py` (SHAP beeswarm PNG + diagrama de fiabilidad).
 - `docker-compose.yml` levanta API (8000) + frontend (3000).
 
-### 6.22 Reorganizaci?n del repositorio (Septiembre 2026)
+### 6.22 Reorganización del repositorio (Septiembre 2026)
 
-Objetivo: dejar el repo publicable sin cambiar ninguna funci?n. Verificado con la suite completa
-(362 tests) antes y despu?s.
+Objetivo: dejar el repo publicable sin cambiar ninguna función. Verificado con la suite completa
+(362 tests) antes y después, y con una ejecución completa del perfil canónico (mismos baselines,
+mismo patrón por ventana).
 
-- **Paquete `mas/`:** `agents/`, `backtester/`, `baselines/`, `judge/`, `utils/` y los m?dulos Python de
-  `data/` se agrupan bajo `mas/`. `data/` conserva solo `universe_2018-01-01.csv` (y la cach? ignorada).
+- **Paquete `mas/`:** `agents/`, `backtester/`, `baselines/`, `judge/`, `utils/` y los módulos Python de
+  `data/` se agrupan bajo `mas/`. `data/` conserva solo `universe_2018-01-01.csv` (y la caché ignorada).
   Todos los imports pasan a `from mas.agents...`, `from mas.data...`, etc.
-- **Perfiles:** `profiles/` mantiene los tres estilos (`swing`, `long_term`, `day_simulated`) y el can?nico
-  `exp1_menos_friccion.yaml`; los 23 perfiles de la campa?a Exp2?Exp11 est?n en `profiles/experiments/`.
-- **C?digo muerto eliminado:** `dashboard/app.py` (stub Streamlit), `agents/explorador.py`
+- **Perfiles:** `profiles/` mantiene los tres estilos (`swing`, `long_term`, `day_simulated`) y el canónico
+  `exp1_menos_friccion.yaml`; los 23 perfiles de la campaña Exp2–Exp11 están en `profiles/experiments/`.
+- **Código muerto eliminado:** `dashboard/app.py` (stub Streamlit), `agents/explorador.py`
   (`NotImplementedError`), `data/universe_manager.py` (sin uso), `pipeline/`, `notebooks/`, las rutas
-  `paper_cache`/`holdout_cache` del walk-forward (importaban un m?dulo inexistente) y los fallbacks de
-  `paper_decision.json` en la API. El bloque de ~250 l?neas de `run.py` que logueaba par?metros perfil a
-  perfil se sustituye por un logger gen?rico de overrides.
+  `paper_cache`/`holdout_cache` del walk-forward (importaban un módulo inexistente) y los fallbacks de
+  `paper_decision.json` en la API. El bloque de ~250 líneas de `run.py` que logueaba parámetros perfil a
+  perfil se sustituye por un logger genérico de overrides.
 - **Secretos:** el User-Agent de la SEC sale de `config.yaml` (y de las 56 copias en `experiments/`) y se lee
   de la variable `SEC_USER_AGENT` (`.env`). `run.py` carga `.env` igual que `run_daily.py`.
 - **Higiene:** `requirements.txt` sin dependencias no usadas (streamlit, plotly, bs4, seaborn, jupyter,
-  scipy expl?cito), `pyproject.toml` con la configuraci?n de pytest, `.gitignore` y `docker-compose.yml`
-  limpios, `docs/` para Plan y Memoria, README nuevo en ingl?s.
-- **Tests:** corregido `test_uses_cache_without_network` (fijaba `end_date` fuera de la cach? VIX y forzaba
+  scipy explícito), `pyproject.toml` con la configuración de pytest, `.gitignore` y `docker-compose.yml`
+  limpios, `docs/` para Plan y Memoria, README nuevo en inglés.
+- **Tests:** corregido `test_uses_cache_without_network` (fijaba `end_date` fuera de la caché VIX y forzaba
   red). Resultado: 362 passed.
