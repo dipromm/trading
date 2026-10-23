@@ -4,6 +4,8 @@ version = "1.0.0"
 description = "Multi-agent trading system with walk-forward validation, Kelly-based risk management and a live dashboard"
 requires-python = ">=3.11"
 readme = "README.md"
+license = "MIT"
+authors = [{ name = "Mario Merino Martín" }]
 dynamic = ["dependencies"]
 
 [tool.setuptools]

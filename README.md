@@ -5,7 +5,7 @@
 ![Frontend](https://img.shields.io/badge/dashboard-FastAPI%20%2B%20Next.js-black)
 ![Status](https://img.shields.io/badge/mode-paper%20trading-orange)
 
-A research-grade trading system where several specialised agents (an XGBoost "mathematician", an
+Personal project by Mario Merino Martín. Several specialised agents (an XGBoost "mathematician", an
 insider-selling watcher, a market-regime anomaly detector, an optional FinBERT news reader) vote on
 40 Nasdaq-100 stocks plus 6 diversification ETFs. A meta-model judge blends the votes, a Half-Kelly
 risk manager sizes positions, and everything is validated with strict walk-forward testing against
@@ -42,8 +42,13 @@ FastAPI + Next.js dashboard shows what the council decided and why.
 
 **Paper trading** started 2026-01-02 with €10 000; the simulated book stood at €11 662 (+16.6 %) on 2026-08-07.
 
-The honest reading: the system beats both baselines on Sharpe, Calmar and total return out-of-sample,
-but 2022 (a bear market) is still a losing year and the edge over Buy & Hold in strong bull years is thin.
+![Equity curve of MAS against Buy & Hold and SMA crossover, with the drawdown underwater plot](docs/images/equity-curve.png)
+
+The honest reading: over the walk-forward windows (2021–2024) MAS beats both baselines on Sharpe
+(0.861 vs 0.723 Buy & Hold and 0.329 SMA), Calmar and total return. On the 2025 holdout it beats
+Buy & Hold on total return (+26.8 % vs +23.9 %), Calmar (1.31 vs 1.30) and win rate (60.2 % vs 57.3 %),
+and loses on Sharpe (1.148 vs 1.213) and max drawdown (−20.8 % vs −18.3 %). 2022, a bear market, is
+still a losing year, and the edge over Buy & Hold in strong bull years is thin.
 See [Limitations](#limitations).
 
 ---
@@ -249,7 +254,7 @@ Environment variables (`.env`): `SEC_USER_AGENT` (required by the SEC for `--caz
 
 - **2022 loses money.** The regime veto reduces but does not remove bear-market drawdown; the Sharpe edge comes from 2021/2023/2024.
 - **Survivorship bias in the universe.** The 40 stocks were picked in 2018 terms but with today's knowledge of who is still in the Nasdaq-100.
-- **Daily close-to-close, no intraday fills, no slippage model** beyond a flat 0.08 % commission.
+- **Fills are assumed at the same close that produced the signal.** Features on day T use data through that close, the training label is the return from close T to close T+1, and the engine buys and sells at close T, so the P&L shows up on the next bar and matches the label. That assumes a fill at the closing print just observed. Stops are checked on the close and filled at that close. There is no next-open execution and no slippage model beyond a flat 0.08 % commission. The SMA 20/50 baseline fills on the same close, so the ranking uses one execution rule.
 - **El Analista is off in the canonical run**: news coverage before 2021 is sparse, and adding it to the full stack did not improve Sharpe.
 - **Single asset universe, single horizon.** No options, no shorting, no leverage.
 - The Juez v2 reinforcement-learning variant and the "Explorador" universe-rotation agent from the original plan were never built; the gate to justify them was not met.
@@ -259,3 +264,7 @@ Environment variables (`.env`): `SEC_USER_AGENT` (required by the SEC for `--caz
 - [`docs/PLAN.md`](docs/PLAN.md) — original design document: agents, phases, success criteria.
 - [`docs/MEMORIA.md`](docs/MEMORIA.md) — technical logbook: every design decision, experiment result, pitfall and fix, phase by phase.
 - [`experiments/README.md`](experiments/README.md) — how the canonical run was chosen and how to reproduce it.
+
+## License
+
+Personal project by Mario Merino Martín. Released under the [MIT License](LICENSE).
