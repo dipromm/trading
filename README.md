@@ -1,4 +1,4 @@
-# MAS Trading — a multi-agent council for daily stock signals
+# MAS Trading — a multi-agent council for daily stock signals [Work In Progress]
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 ![Tests](https://img.shields.io/badge/tests-362%20passed-brightgreen)
